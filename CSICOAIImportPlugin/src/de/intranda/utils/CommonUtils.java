@@ -34,12 +34,6 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
 import org.apache.commons.io.output.FileWriterWithEncoding;
-import org.apache.http.HttpResponse;
-import org.apache.http.client.HttpClient;
-import org.apache.http.client.ResponseHandler;
-import org.apache.http.client.methods.HttpGet;
-import org.apache.http.impl.client.BasicResponseHandler;
-import org.apache.http.impl.client.DefaultHttpClient;
 import org.apache.log4j.Logger;
 import org.jdom.Document;
 import org.jdom.JDOMException;
@@ -255,31 +249,60 @@ public class CommonUtils {
 	/**
 	 * Moves (actually renames) all files (and directories) within directory dir to another directory destDir
 	 * 
-	 * @param dir
+	 * @param sourcedir
 	 * @param destDir
+	 * @param overwrite
+	 *            Forces files that are already in the destDir to be overwritten by the corresponding file in sourceDir. If false, the file will not
+	 *            be moved an remain in the sourceDir
 	 * @return
 	 */
-	public static boolean moveDir(File dir, File destDir) {
-		if (dir == null || !dir.isDirectory()) {
-			return false;
+	public static void moveDir(File sourcedir, File destDir, boolean overwrite) throws FileNotFoundException, IOException {
+		if (sourcedir == null || !sourcedir.isDirectory()) {
+			throw new FileNotFoundException("Cannot move from a nonexisting directory");
 		}
-		File[] files = dir.listFiles();
+		if (destDir.getAbsolutePath().startsWith(sourcedir.getAbsolutePath())) {
+			throw new IOException("Cannot move into its own subdirectory");
+		}
+		File[] files = sourcedir.listFiles();
+
 		if (files == null || files.length == 0) {
-			return dir.renameTo(destDir);
+
+			// don't move id destDir already exists - the source Dir is empty anyway
+			if (destDir != null && destDir.isDirectory()) {
+				sourcedir.delete();
+				return;
+			}
+
+			boolean success = false;
+			try {
+				success = sourcedir.renameTo(destDir);
+			} catch (NullPointerException e) {
+				throw new FileNotFoundException(e.getMessage());
+			}
+			if (!success) {
+				throw new IOException("Failed moving directory " + sourcedir.getAbsolutePath());
+			}
+			return;
 		}
+
 		destDir.mkdirs();
 		for (File file : files) {
 			if (file.isDirectory()) {
-				moveDir(file, new File(destDir, file.getName()));
+				moveDir(file, new File(destDir, file.getName()), overwrite);
 			} else {
-				if (!file.renameTo(new File(destDir, file.getName()))) {
-					logger.error("Unable to move file " + file.getAbsolutePath() + " to directory " + destDir.getAbsolutePath());
-					return false;
+				File destFile = new File(destDir, file.getName());
+				if (overwrite || !destFile.isFile()) {
+					if (!file.renameTo(new File(destDir, file.getName()))) {
+						throw new IOException("Unable to move file " + file.getAbsolutePath() + " to directory " + destDir.getAbsolutePath());
+
+					}
 				}
 			}
 		}
-		dir.delete();
-		return true;
+		if(sourcedir.listFiles().length == 0) {
+			sourcedir.delete();
+		}
+		return;
 	}
 
 	/**
@@ -497,44 +520,6 @@ public class CommonUtils {
 //		}
 	}
 	
-	public static String getWebContent(String urlString) {
-		 String answer="";
-		 HttpClient httpclient = new DefaultHttpClient();
-      try {
-          HttpGet httpget = new HttpGet(urlString);
-          ResponseHandler<String> responseHandler = new BasicResponseHandler();
-          answer = httpclient.execute(httpget, responseHandler);
-      } catch (IOException e) {
-			System.out.println("Fatal transport error: " + e.getMessage());
-		} catch (IllegalArgumentException e) {
-			System.out.println("Illegal argument error:" + e.getMessage());
-      } finally {
-          // When HttpClient instance is no longer needed,
-          // shut down the connection manager to ensure
-          // immediate deallocation of all system resources
-          httpclient.getConnectionManager().shutdown();
-      }
-      return answer;
-	}
-
-	public static boolean getUrlExists(String url) {
-		logger.info("check cache for: " + url);
-		HttpClient httpclient = new DefaultHttpClient();
-		int status = 0;
-		try {
-			HttpGet httpget = new HttpGet(url);
-			HttpResponse hr = httpclient.execute(httpget);
-			status = hr.getStatusLine().getStatusCode();
-		} catch (IOException e) {
-			System.out.println("Fatal transport error: " + e.getMessage());
-		} catch (IllegalArgumentException e) {
-			System.out.println("Illegal argument error:" + e.getMessage());
-		} finally {
-			httpclient.getConnectionManager().shutdown();
-		}
-		logger.info("cache entry exists: " + (status == 200));
-		return status==200;
-	}
 	
 	public static FilenameFilter ZipFilter = new FilenameFilter() {
 		@Override

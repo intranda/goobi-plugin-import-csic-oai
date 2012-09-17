@@ -73,7 +73,7 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 	private static final Logger logger = Logger.getLogger(CSICOAIImport.class);
 
 	private static final String NAME = "CSICOAIImport";
-	private static final String VERSION = "1.0.20120822";
+	private static final String VERSION = "1.0.20120917";
 	private static final String XSLT_PATH = ConfigMain.getParameter("xsltFolder") + "MARC21slim2MODS3.xsl";
 	// private static final String XSLT_PATH = "resources/" + "MARC21slim2MODS3.xsl";
 	// private static final String MODS_MAPPING_FILE = "resources/" + "mods_map.xml";
@@ -83,7 +83,8 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 	private static final String idPrefix = "";
 	public final File exportFolder = new File(ConfigPlugins.getPluginConfig(this).getString("importFolder", "/opt/digiverso/ftp-import/"));
 	public final String projectIdentifierTitle = (ConfigPlugins.getPluginConfig(this).getString("projectIdentifier", "projectIdentifier"));
-	public static final String encoding = "iso-8859-15";
+	public static final String outputEncoding = "iso-8859-15";
+	public static final String inputEncoding = "utf-8";
 
 	private String data;
 
@@ -102,7 +103,7 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 	private String currentAuthor;
 	private List<String> currentCollectionList;
 
-	private boolean deleteTempFiles = false;
+	private boolean deleteTempFiles = true;
 	private boolean copyImages = true;
 	private boolean deleteOriginalImages = true;
 	private boolean updateExistingRecords = true;
@@ -347,7 +348,7 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 			String fileName = newMetaFileName;
 			logger.debug("Writing '" + fileName + "' into existing folder...");
 			ff.write(fileName);
-
+			copyImageFiles(imageDir);
 			// getting anchor file
 			if (!importFolder.isDirectory()) {
 				logger.warn("no hotfolder found. Cannot get anchor files");
@@ -365,30 +366,30 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 				if (sourceFolder != null && sourceFolder.isDirectory()) {
 					File tempDir = sourceFolder.getParentFile();
 					File metadataDir = oldMetaFile.getParentFile();
+					
+					CommonUtils.moveDir(tempDir, metadataDir, true);
 
-					File[] files = tempDir.listFiles();
-					if (files != null) {
-						for (File file : files) {
-							File newFile = new File(metadataDir, file.getName());
-							if (file.isDirectory() && !newFile.getName().contentEquals("images")) {
-								int counter = 0;
-								while (newFile.isDirectory()) {
-									newFile = new File(newFile.getParent(), file.getName() + counter);
-									counter++;
-								}
-								org.apache.commons.io.FileUtils.copyDirectory(file, newFile);
-							} else if (file.isFile()) {
-								int counter = 0;
-								while (newFile.isFile()) {
-									String fileNameTrunk = newFile.getName().substring(0, newFile.getName().indexOf("."));
-									String fileNameExt = newFile.getName().substring(newFile.getName().indexOf("."));
-									newFile = new File(newFile.getParent(), fileNameTrunk + counter + fileNameExt);
-									counter++;
-								}
-								org.apache.commons.io.FileUtils.copyDirectory(file, newFile);
-							}
-						}
-					}
+//					File[] files = tempDir.listFiles();
+//					if (files != null) {
+//						for (File file : files) {
+//							File newFile = new File(metadataDir, file.getName());
+//							if (file.isDirectory()) {
+//								if(newFile.isDirectory()) {
+//									CommonUtils.m
+//								}
+////								org.apache.commons.io.FileUtils.copyDirectory(file, newFile);
+//							} else if (file.isFile()) {
+//								int counter = 0;
+//								while (newFile.isFile()) {
+//									String fileNameTrunk = newFile.getName().substring(0, newFile.getName().indexOf("."));
+//									String fileNameExt = newFile.getName().substring(newFile.getName().indexOf("."));
+//									newFile = new File(newFile.getParent(), fileNameTrunk + counter + fileNameExt);
+//									counter++;
+//								}
+//								org.apache.commons.io.FileUtils.copyDirectory(file, newFile);
+//							}
+//						}
+//					}
 				}
 
 				// purging old temp files
@@ -419,7 +420,7 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 		String urlString = urlPrefix + id;
 		String oaiRecord = getWebContent(urlString);
 		logger.trace("url = " + urlString);
-		Document oaiDoc = CommonUtils.getDocumentFromString(oaiRecord, "utf-8");
+		Document oaiDoc = CommonUtils.getDocumentFromString(oaiRecord, inputEncoding);
 		if (oaiDoc == null) {
 			logger.error("Failed to download oai document");
 			return null;
@@ -441,7 +442,7 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 		}
 		Element marcElement = (Element) recordElement.getChildren().get(0);
 		Document marcDoc = new Document((Element) marcElement.clone());
-		return CommonUtils.getStringFromDocument(marcDoc, encoding);
+		return CommonUtils.getStringFromDocument(marcDoc, outputEncoding);
 	}
 
 	@Override
@@ -601,10 +602,23 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 						// isSeriesVolume = true;
 						dsAnchor.addChild(dsVolume);
 						dd.setLogicalDocStruct(dsAnchor);
+						String volumeName = dsVolume.getType().getName();
+						if (volumeName.contentEquals("Monograph")) {
+							dsVolume.setType(prefs.getDocStrctTypeByName("SerialVolume"));
+						}
+						if (volumeName.contentEquals("SingleManuscript")) {
+							dsVolume.setType(prefs.getDocStrctTypeByName("Manuscript"));
+						}
 					} else {
 						dd.setLogicalDocStruct(dsVolume);
 						logger.debug("Record is not part of a series");
-						// isSeriesVolume = false;
+						String volumeName = dsVolume.getType().getName();
+						if (volumeName.contentEquals("SerialVolume")) {
+							dsVolume.setType(prefs.getDocStrctTypeByName("Monograph"));
+						}
+						if (volumeName.contentEquals("Manuscript")) {
+							dsVolume.setType(prefs.getDocStrctTypeByName("SingleManuscript"));
+						}
 					}
 				} catch (TypeNotAllowedAsChildException e) {
 					logger.error("Child Type not allowed", e);
@@ -857,21 +871,23 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 		// parse all image Files and write them into new Files in the import
 		// directory
 		List<File> images = Arrays.asList(imageDir.listFiles(CommonUtils.ImageFilter));
-		for (File imageFile : images) {
-			try {
+		try {
+			for (File imageFile : images) {
 				String filename = imageFile.getName();
 				if (!deleteOriginalImages) {
 					copyFile(imageFile, new File(tempTiffDir, filename));
 					logger.debug("Copying image " + filename);
 				} else {
-					imageFile.renameTo(new File(tempTiffDir, filename));
+					if (!imageFile.renameTo(new File(tempTiffDir, filename))) {
+						throw new IOException("Unable to move image Files");
+					}
 				}
 				// if (deleteOriginalImages) {
 				// imageFile.delete();
 				// }
-			} catch (Exception e) {
-				logger.error(e.getMessage(), e);
 			}
+		} catch (Exception e) {
+			logger.error(e.getMessage(), e);
 		}
 	}
 
@@ -977,23 +993,20 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 	public static String getWebContent(String urlString) {
 		String answer = "";
 		try {
-		URL url = new URL(urlString);
-        URLConnection yc = url.openConnection();
-        BufferedReader in = new BufferedReader(
-                                new InputStreamReader(
-                                yc.getInputStream()));
+			URL url = new URL(urlString);
+			URLConnection yc = url.openConnection();
+			BufferedReader in = new BufferedReader(new InputStreamReader(yc.getInputStream()));
 
-        String inputLine = null;
-        while ((inputLine = in.readLine()) != null) {
-        	answer += (inputLine + "\n");
-        }
-        in.close();
-		}catch(IOException e) {
-        	
-        }
+			String inputLine = null;
+			while ((inputLine = in.readLine()) != null) {
+				answer += (inputLine + "\n");
+			}
+			in.close();
+		} catch (IOException e) {
+
+		}
 		return answer;
-    }
-
+	}
 
 	/**
 	 * returns the metadatafile meta.xml if a prozess of this name was found, null otherwise
