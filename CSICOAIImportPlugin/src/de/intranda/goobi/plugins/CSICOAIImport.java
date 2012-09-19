@@ -1,7 +1,9 @@
 package de.intranda.goobi.plugins;
 
+import java.awt.event.InputEvent;
 import java.io.BufferedInputStream;
 import java.io.BufferedReader;
+import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.FileFilter;
 import java.io.FileInputStream;
@@ -10,6 +12,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.StringReader;
+import java.io.StringWriter;
 import java.net.URL;
 import java.net.URLConnection;
 import java.util.ArrayList;
@@ -23,6 +26,7 @@ import java.util.regex.Pattern;
 
 import net.xeoh.plugins.base.annotations.PluginImplementation;
 
+import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang.StringUtils;
 import org.apache.log4j.Logger;
 import org.goobi.production.Import.DocstructElement;
@@ -34,6 +38,7 @@ import org.goobi.production.enums.PluginType;
 import org.goobi.production.plugin.interfaces.IImportPlugin;
 import org.goobi.production.plugin.interfaces.IPlugin;
 import org.goobi.production.properties.ImportProperty;
+import org.jdom.Content;
 import org.jdom.Document;
 import org.jdom.Element;
 import org.jdom.JDOMException;
@@ -73,7 +78,7 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 	private static final Logger logger = Logger.getLogger(CSICOAIImport.class);
 
 	private static final String NAME = "CSICOAIImport";
-	private static final String VERSION = "1.0.20120917";
+	private static final String VERSION = "1.0.20120919.3";
 	private static final String XSLT_PATH = ConfigMain.getParameter("xsltFolder") + "MARC21slim2MODS3.xsl";
 	// private static final String XSLT_PATH = "resources/" + "MARC21slim2MODS3.xsl";
 	// private static final String MODS_MAPPING_FILE = "resources/" + "mods_map.xml";
@@ -83,8 +88,9 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 	private static final String idPrefix = "";
 	public final File exportFolder = new File(ConfigPlugins.getPluginConfig(this).getString("importFolder", "/opt/digiverso/ftp-import/"));
 	public final String projectIdentifierTitle = (ConfigPlugins.getPluginConfig(this).getString("projectIdentifier", "projectIdentifier"));
-	public static final String outputEncoding = "iso-8859-15";
-	public static final String inputEncoding = "utf-8";
+	public final String outputEncoding = (ConfigPlugins.getPluginConfig(this).getString("outputEncoding", "iso-8859-15"));
+	public final String inputEncoding = (ConfigPlugins.getPluginConfig(this).getString("inputEncoding", "utf-8"));
+	public final String conversionEncoding = (ConfigPlugins.getPluginConfig(this).getString("conversionEncoding", "iso-8859-15"));
 
 	private String data;
 
@@ -103,7 +109,7 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 	private String currentAuthor;
 	private List<String> currentCollectionList;
 
-	private boolean deleteTempFiles = true;
+	private boolean deleteTempFiles = false;
 	private boolean copyImages = true;
 	private boolean deleteOriginalImages = true;
 	private boolean updateExistingRecords = true;
@@ -130,6 +136,7 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 
 		anchorMap.put("Monograph", "Series");
 		anchorMap.put("Manuscript", "Series");
+		anchorMap.put("SingleManuscript", "Series");
 		anchorMap.put("SerialVolume", "Series");
 		anchorMap.put("Volume", "MultiVolumeWork");
 		anchorMap.put("PeriodicalVolume", "Periodical");
@@ -344,6 +351,7 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 		try {
 			if (ff == null) {
 				logger.error("Mets document is null. Aborting import");
+				return false;
 			}
 			String fileName = newMetaFileName;
 			logger.debug("Writing '" + fileName + "' into existing folder...");
@@ -366,30 +374,30 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 				if (sourceFolder != null && sourceFolder.isDirectory()) {
 					File tempDir = sourceFolder.getParentFile();
 					File metadataDir = oldMetaFile.getParentFile();
-					
+
 					CommonUtils.moveDir(tempDir, metadataDir, true);
 
-//					File[] files = tempDir.listFiles();
-//					if (files != null) {
-//						for (File file : files) {
-//							File newFile = new File(metadataDir, file.getName());
-//							if (file.isDirectory()) {
-//								if(newFile.isDirectory()) {
-//									CommonUtils.m
-//								}
-////								org.apache.commons.io.FileUtils.copyDirectory(file, newFile);
-//							} else if (file.isFile()) {
-//								int counter = 0;
-//								while (newFile.isFile()) {
-//									String fileNameTrunk = newFile.getName().substring(0, newFile.getName().indexOf("."));
-//									String fileNameExt = newFile.getName().substring(newFile.getName().indexOf("."));
-//									newFile = new File(newFile.getParent(), fileNameTrunk + counter + fileNameExt);
-//									counter++;
-//								}
-//								org.apache.commons.io.FileUtils.copyDirectory(file, newFile);
-//							}
-//						}
-//					}
+					// File[] files = tempDir.listFiles();
+					// if (files != null) {
+					// for (File file : files) {
+					// File newFile = new File(metadataDir, file.getName());
+					// if (file.isDirectory()) {
+					// if(newFile.isDirectory()) {
+					// CommonUtils.m
+					// }
+					// // org.apache.commons.io.FileUtils.copyDirectory(file, newFile);
+					// } else if (file.isFile()) {
+					// int counter = 0;
+					// while (newFile.isFile()) {
+					// String fileNameTrunk = newFile.getName().substring(0, newFile.getName().indexOf("."));
+					// String fileNameExt = newFile.getName().substring(newFile.getName().indexOf("."));
+					// newFile = new File(newFile.getParent(), fileNameTrunk + counter + fileNameExt);
+					// counter++;
+					// }
+					// org.apache.commons.io.FileUtils.copyDirectory(file, newFile);
+					// }
+					// }
+					// }
 				}
 
 				// purging old temp files
@@ -413,14 +421,19 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 		return true;
 	}
 
-	private static String getMarcRecordFromOAI(String id) {
+	private String getMarcRecordFromOAI(String id) {
 
 		String urlPrefix = "http://aleph.csic.es/OAI?verb=GetRecord&metadataPrefix=marc21&identifier=oai:csic.aleph:MAD01-";
-
-		String urlString = urlPrefix + id;
-		String oaiRecord = getWebContent(urlString);
-		logger.trace("url = " + urlString);
-		Document oaiDoc = CommonUtils.getDocumentFromString(oaiRecord, inputEncoding);
+		Document oaiDoc = null;
+		try {
+			String urlString = urlPrefix + id;
+			String oaiRecord = getWebContent(urlString);
+			logger.trace("url = " + urlString);
+			oaiDoc = CommonUtils.getDocumentFromString(oaiRecord, inputEncoding);
+		} catch (IOException e) {
+			logger.error("Failed to download oai document");
+			return null;
+		}
 		if (oaiDoc == null) {
 			logger.error("Failed to download oai document");
 			return null;
@@ -500,7 +513,8 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 		StringReader sr = null;
 		try {
 			sr = new StringReader(data);
-			doc = new SAXBuilder().build(sr);
+			ByteArrayInputStream bais = new ByteArrayInputStream(data.getBytes(conversionEncoding));
+			doc = new SAXBuilder().build(bais);
 
 			// remove namespaces
 			Element docRoot = doc.getRootElement();
@@ -541,35 +555,84 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 				// Determine the root docstruct type
 				String dsType = null;
 				String dsAnchorType = null;
-				if (eleMods.getChild("originInfo", null) != null) {
-					Element eleIssuance = eleMods.getChild("originInfo", null).getChild("issuance", null);
-					if (eleIssuance != null && marcStructTypeMap.get("?" + eleIssuance.getTextTrim()) != null) {
-						dsType = marcStructTypeMap.get("?" + eleIssuance.getTextTrim());
-					}
-				}
-				Element eleTypeOfResource = eleMods.getChild("typeOfResource", null);
-				if (eleTypeOfResource != null) {
-					if ("yes".equals(eleTypeOfResource.getAttributeValue("manuscript"))) {
-						// Manuscript
-						dsType = "Manuscript";
-					} else if (marcStructTypeMap.get("?" + eleTypeOfResource.getTextTrim()) != null) {
-						dsType = marcStructTypeMap.get("?" + eleTypeOfResource.getTextTrim());
-					} else {
-						dsType = "Monograph";
+
+				// handle TypeOfResource
+				List<Element> eleTypeOfResourceList = eleMods.getChildren("typeOfResource", null);
+				if (eleTypeOfResourceList != null) {
+					for (Element eleTypeOfResource : eleTypeOfResourceList) {
+						if ("yes".equals(eleTypeOfResource.getAttributeValue("manuscript"))) {
+							// Manuscript
+							dsType = "SingleManuscript";
+						} else if (marcStructTypeMap.get("?" + eleTypeOfResource.getTextTrim()) != null) {
+							dsType = marcStructTypeMap.get("?" + eleTypeOfResource.getTextTrim());
+						} else {
+							dsType = "Monograph";
+						}
 					}
 				}
 
-				dsAnchorType = anchorMap.get(dsType);
-				// dsType = "Volume";
-				logger.debug("Docstruct type: " + dsType);
-				DocStruct dsAnchor = dd.createDocStruct(prefs.getDocStrctTypeByName(dsAnchorType));
-				if (dsAnchor == null) {
-					logger.error("Could not create DocStructType " + dsAnchorType);
+				// handle issuance/frequency
+				List<Element> eleOriginInfoList = eleMods.getChildren("originInfo", null);
+				if (eleOriginInfoList != null) {
+					for (Element eleOriginInfo : eleOriginInfoList) {
+						Element eleIssuance = eleOriginInfo.getChild("issuance", null);
+						if (eleIssuance != null && marcStructTypeMap.get("?" + eleIssuance.getTextTrim()) != null) {
+							if (!dsType.contains("Manuscript") && marcStructTypeMap.get("?" + eleIssuance.getTextTrim()) != null) {
+								dsType = marcStructTypeMap.get("?" + eleIssuance.getTextTrim());
+							}
+						}
+						Element eleFrequency = eleOriginInfo.getChild("frequency", null);
+						if (eleFrequency != null && eleFrequency.getValue() != null && !eleFrequency.getValue().isEmpty()) {
+							// it has a frequency, therefore gets an anchor
+							dsAnchorType = anchorMap.get(dsType);
+							if (dsAnchorType == null) {
+								dsAnchorType = "Series";
+							}
+						}
+					}
 				}
+
+				// handle relatedSeries
+				List<Element> eleRelatedSeriesList = eleMods.getChildren("relatedItem", null);
+				if (eleRelatedSeriesList != null) {
+					for (Element eleRelatedSeries : eleRelatedSeriesList) {
+
+						if (eleRelatedSeries != null && eleRelatedSeries.getAttribute("type") != null
+								&& eleRelatedSeries.getAttribute("type").getValue().contentEquals("series")) {
+							if (dsAnchorType == null) {
+								dsAnchorType = "Series";
+							}
+						}
+					}
+				}
+
+				// if we still don't have an anchorType, but dsType requires one, create an appropriate one
+				if (dsAnchorType == null) {
+					if (dsType.contentEquals("PeriodicalVolume")) {
+						dsAnchorType = "Periodical";
+					} else if (dsType.contentEquals("Volume")) {
+						dsAnchorType = "MultiVolumeWork";
+					}
+				} else { // There is an anchor
+					if (dsType.contentEquals("SingleManuscript")) {
+						dsType = "Manuscript";
+					} else if (dsType.contentEquals("Monograph")) {
+						dsType = "SerialVolume";
+					}
+				}
+
+				logger.debug("Docstruct type: " + dsType);
 				DocStruct dsVolume = dd.createDocStruct(prefs.getDocStrctTypeByName(dsType));
 				if (dsVolume == null) {
 					logger.error("Could not create DocStructType " + dsVolume);
 					return null;
+				}
+				DocStruct dsAnchor = null;
+				if (dsAnchorType != null) {
+					dsAnchor = dd.createDocStruct(prefs.getDocStrctTypeByName(dsAnchorType));
+					if (dsAnchor == null) {
+						logger.error("Could not create DocStructType " + dsAnchorType);
+					}
 				}
 
 				DocStruct dsBoundBook = dd.createDocStruct(prefs.getDocStrctTypeByName("BoundBook"));
@@ -627,7 +690,9 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 				if (!deleteTempFiles) {
 					try {
 						File modsFile = new File(sourceFolder, "modsTemp.xml");
+						File marcFile = new File(sourceFolder, "marcRecord.xml");
 						CommonUtils.getFileFromDocument(modsFile, docMods);
+						CommonUtils.writeTextFile(data, marcFile, conversionEncoding, false);
 					} catch (IOException e) {
 						// TODO Auto-generated catch block
 						e.printStackTrace();
@@ -878,13 +943,12 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 					copyFile(imageFile, new File(tempTiffDir, filename));
 					logger.debug("Copying image " + filename);
 				} else {
-					if (!imageFile.renameTo(new File(tempTiffDir, filename))) {
-						throw new IOException("Unable to move image Files");
-					}
+					CommonUtils.moveFile(imageFile, new File(tempTiffDir, filename), true);
+//					if (!imageFile.renameTo(new File(tempTiffDir, filename))) {
+//						copyFile(imageFile, new File(tempTiffDir, filename));
+//						imageFile.delete();
+//					}
 				}
-				// if (deleteOriginalImages) {
-				// imageFile.delete();
-				// }
 			}
 		} catch (Exception e) {
 			logger.error(e.getMessage(), e);
@@ -990,21 +1054,25 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 		return root;
 	}
 
-	public static String getWebContent(String urlString) {
+	public String getWebContent(String urlString) throws IOException {
 		String answer = "";
-		try {
-			URL url = new URL(urlString);
-			URLConnection yc = url.openConnection();
-			BufferedReader in = new BufferedReader(new InputStreamReader(yc.getInputStream()));
+		StringWriter writer = null;
+		URLConnection yc = null;
+		InputStream in = null;
+		URL url = new URL(urlString);
+		yc = url.openConnection();
+		// BufferedReader in = new BufferedReader(new InputStreamReader(yc.getInputStream()));
+		writer = new StringWriter();
+		in = yc.getInputStream();
+		IOUtils.copy(in, writer, inputEncoding);
+		answer = writer.toString();
 
-			String inputLine = null;
-			while ((inputLine = in.readLine()) != null) {
-				answer += (inputLine + "\n");
-			}
-			in.close();
-		} catch (IOException e) {
-
-		}
+		// String inputLine = null;
+		// while ((inputLine = in.readLine()) != null) {
+		// answer += (inputLine + "\n");
+		// }
+		in.close();
+		writer.close();
 		return answer;
 	}
 
@@ -1049,11 +1117,5 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 			return file.isDirectory();
 		}
 	};
-
-	public static void main(String[] args) {
-		String id = "000012611";
-		String inString = getMarcRecordFromOAI(id);
-		Document doc = CommonUtils.getDocumentFromString(inString, "utf-8");
-	}
 
 }
