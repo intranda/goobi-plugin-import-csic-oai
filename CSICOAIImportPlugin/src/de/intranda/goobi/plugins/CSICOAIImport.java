@@ -78,7 +78,7 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 	private static final Logger logger = Logger.getLogger(CSICOAIImport.class);
 
 	private static final String NAME = "CSICOAIImport";
-	private static final String VERSION = "1.0.20120919.3";
+	private static final String VERSION = "1.0.20120920";
 	private static final String XSLT_PATH = ConfigMain.getParameter("xsltFolder") + "MARC21slim2MODS3.xsl";
 	// private static final String XSLT_PATH = "resources/" + "MARC21slim2MODS3.xsl";
 	// private static final String MODS_MAPPING_FILE = "resources/" + "mods_map.xml";
@@ -252,10 +252,19 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 		List<Record> recordList = new ArrayList<Record>();
 
 		for (String dirString : filenames) {
-			File dir = new File(dirString);
-			String filename = dir.getName();
+			
+				String[] parts = dirString.split("::");
+				if (parts == null || parts.length != 2) {
+					// return recordList;
+					continue;
+				}
+				String projectName = parts[0].trim();
+				String dirName = parts[1].trim();
+				File projectDir = new File(exportFolder, projectName);
+				File recordDir = new File(projectDir, dirName);
+			
 			// Get the aleph-Identifier from the filename
-			String[] parts = filename.split("_");
+			parts = dirName.split("_");
 			String idString = null;
 			String idSuffix = null;
 
@@ -291,7 +300,7 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 			record.setId(idString + "_" + idSuffix);
 			record.setData(marcRecord);
 			// recordList.add(record);
-			recordImageMap.put(record.getId(), dir);
+			recordImageMap.put(record.getId(), recordDir);
 
 			File oldFile = searchForExistingData(record.getId());
 			if (oldFile != null) {
@@ -484,19 +493,13 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 	}
 
 	@Override
-	public String getId() {
-		return getDescription();
-	}
-
-	@Override
 	public String getDescription() {
 		return NAME + " v" + VERSION;
 	}
 
 	@Override
 	public void setData(Record r) {
-		// TODO Auto-generated method stub
-
+		data = r.getData();
 	}
 
 	@Override
@@ -694,8 +697,7 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 						CommonUtils.getFileFromDocument(modsFile, docMods);
 						CommonUtils.writeTextFile(data, marcFile, conversionEncoding, false);
 					} catch (IOException e) {
-						// TODO Auto-generated catch block
-						e.printStackTrace();
+						logger.error(e.getMessage(), e);
 					}
 				}
 
@@ -750,7 +752,7 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 
 	@Override
 	public String getImportFolder() {
-		return importFolder.getAbsolutePath();
+		return importFolder.getAbsolutePath() + File.separator;
 	}
 
 	@Override
@@ -777,31 +779,25 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 
 	@Override
 	public List<Record> splitRecords(String records) {
-		// TODO Auto-generated method stub
 		return null;
 	}
 
 	@Override
 	public List<Record> generateRecordsFromFile() {
-		// TODO Auto-generated method stub
 		return null;
 	}
 
 	@Override
 	public void setFile(File importFile) {
-		// TODO Auto-generated method stub
-
-	}
+			}
 
 	@Override
 	public List<String> splitIds(String ids) {
-		// TODO Auto-generated method stub
 		return null;
 	}
 
 	@Override
 	public List<ImportProperty> getProperties() {
-		// TODO Auto-generated method stub
 		return null;
 	}
 
@@ -828,7 +824,7 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 					if (dirList != null && dirList.length > 0) {
 						for (File recordDir : dirList) {
 							if (recordDir.getName().startsWith("M_")) {
-								filenameList.add(recordDir.getAbsolutePath());
+								filenameList.add(project + "::\t" + recordDir.getName());
 							}
 						}
 					}
@@ -847,44 +843,47 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 
 	@Override
 	public void deleteFiles(List<String> selectedFilenames) {
-		// TODO Auto-generated method stub
-
-	}
+			String id = getProcessTitle();
+			if(id != null) {
+				id = id.replace(".xml", "");
+				if(importFolder.isDirectory() && importFolder.listFiles() != null) {
+					for (File file : importFolder.listFiles()) {
+						if(file.getName().contains(id)) {
+								CommonUtils.deleteAllFiles(file);
+						}
+					}
+				}
+						
+			}
+		}
 
 	@Override
 	public List<DocstructElement> getCurrentDocStructs() {
-		// TODO Auto-generated method stub
 		return null;
 	}
 
 	@Override
 	public String deleteDocstruct() {
-		// TODO Auto-generated method stub
 		return null;
 	}
 
 	@Override
 	public String addDocstruct() {
-		// TODO Auto-generated method stub
 		return null;
 	}
 
 	@Override
 	public List<String> getPossibleDocstructs() {
-		// TODO Auto-generated method stub
 		return null;
 	}
 
 	@Override
 	public DocstructElement getDocstruct() {
-		// TODO Auto-generated method stub
 		return null;
 	}
 
 	@Override
 	public void setDocstruct(DocstructElement dse) {
-		// TODO Auto-generated method stub
-
 	}
 
 	private void addProject(Fileformat ff, String projectName) {
@@ -930,7 +929,7 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 		File tempDir = new File(importFolder, getProcessTitle().replace(".xml", ""));
 		File tempImageDir = new File(tempDir, "images");
 		File tempTiffDir = new File(tempImageDir, getProcessTitle().replace(".xml", "") + "_tif");
-		File tempOrigDir = new File(tempImageDir, "orig_" + getProcessTitle().replace(".xml", "") + "_tif");
+//		File tempOrigDir = new File(tempImageDir, "orig_" + getProcessTitle().replace(".xml", "") + "_tif");
 		tempTiffDir.mkdirs();
 
 		// parse all image Files and write them into new Files in the import
@@ -1117,5 +1116,10 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 			return file.isDirectory();
 		}
 	};
+
+	@Override
+	public String getId() {
+		return null;
+	}
 
 }
