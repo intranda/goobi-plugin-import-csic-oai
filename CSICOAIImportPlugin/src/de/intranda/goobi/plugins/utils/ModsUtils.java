@@ -52,6 +52,7 @@ import ugh.dl.Metadata;
 import ugh.dl.MetadataType;
 import ugh.dl.Person;
 import ugh.dl.Prefs;
+import ugh.dl.RomanNumeral;
 import ugh.exceptions.DocStructHasNoTypeException;
 import ugh.exceptions.MetadataTypeNotAllowedException;
 
@@ -296,7 +297,7 @@ public class ModsUtils {
 							dsPhysical.addMetadata(pieceDesignationMetadata);
 						}
 
-						if(counter < 10) {							
+						if (counter < 10) {
 							counter++;
 						}
 
@@ -307,7 +308,7 @@ public class ModsUtils {
 				}
 				continue;
 			}
-			
+
 			// Code to handle related works, e.g. series
 			if (mdName.contentEquals("relatedSeries")) {
 				List<Element> eleXpathList = eleMetadata.getChildren("xpath", null);
@@ -395,8 +396,8 @@ public class ModsUtils {
 										person.setRole(mdType.getName());
 										if (eleMetadata.getAttribute("logical") != null
 												&& eleMetadata.getAttributeValue("logical").equalsIgnoreCase("true")) {
-											
-												dsLogical.addPerson(person);
+
+											dsLogical.addPerson(person);
 
 										}
 									} catch (MetadataTypeNotAllowedException e) {
@@ -446,7 +447,10 @@ public class ModsUtils {
 										value = title;
 									} else
 										continue;
+								} else if (mdType.getName().contentEquals("CurrentNoSorting")) {
+									value = correctCurrentNoSorting(value);
 								}
+								
 
 								// Add singleDigCollection to series also
 								if (anchorMetadataList.contains(mdType.getName()) && dsSeries != null) {
@@ -475,7 +479,7 @@ public class ModsUtils {
 												&& eleMetadata.getAttributeValue("logical").equalsIgnoreCase("true")) {
 											// logger.debug("Added metadata \"" + metadata.getValue() + "\" to logical structure");
 
-												dsLogical.addMetadata(metadata);
+											dsLogical.addMetadata(metadata);
 
 										}
 										if (eleMetadata.getAttribute("physical") != null
@@ -518,7 +522,6 @@ public class ModsUtils {
 
 				dsSeries.addMetadata(mdTitle);
 				dsSeries.addMetadata(mdID);
-
 
 			} catch (MetadataTypeNotAllowedException e) {
 				logger.warn(e.getMessage());
@@ -777,5 +780,37 @@ public class ModsUtils {
 		}
 
 		return ret;
+	}
+
+	private static String correctCurrentNoSorting(String inString) {
+
+		String outString = null;
+		try {
+			//Try to read a number
+			int n = Integer.valueOf(inString);
+			outString = "" + n;
+		} catch (NumberFormatException e) {
+			logger.trace("No arabic numeral");
+			try {
+				//Try to read a roman numeral
+				RomanNumeral rn = new RomanNumeral(inString);
+				outString = "" + rn.intValue();
+			} catch (NumberFormatException e1) {
+				logger.trace("No roman numeral");
+				//Just get the first arabic number
+				String[] split = inString.split("\\D");
+				if(split==null || split.length==0) {
+					//There are no numbers in this String, try again with roman numerals
+					split = inString.split("\\W");
+					if(split==null || split.length==0) {
+						//Nothing found. return empty
+						return "";
+					}
+				}
+				return correctCurrentNoSorting(split[0]);
+			}
+			
+		}
+		return outString;
 	}
 }
