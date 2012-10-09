@@ -1,5 +1,7 @@
 package de.intranda.goobi.plugins;
 
+import gov.loc.mets.DivType;
+
 import java.awt.event.InputEvent;
 import java.io.BufferedInputStream;
 import java.io.BufferedReader;
@@ -13,6 +15,7 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.StringReader;
 import java.io.StringWriter;
+import java.math.BigInteger;
 import java.net.URL;
 import java.net.URLConnection;
 import java.util.ArrayList;
@@ -25,6 +28,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import net.xeoh.plugins.base.annotations.PluginImplementation;
+import net.xeoh.plugins.base.annotations.configuration.IsDisabled;
 
 import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang.StringUtils;
@@ -47,8 +51,10 @@ import org.jdom.input.SAXBuilder;
 import org.jdom.output.XMLOutputter;
 import org.jdom.transform.XSLTransformer;
 
+import ugh.dl.ContentFile;
 import ugh.dl.DigitalDocument;
 import ugh.dl.DocStruct;
+import ugh.dl.FileSet;
 import ugh.dl.Fileformat;
 import ugh.dl.Metadata;
 import ugh.dl.MetadataType;
@@ -76,14 +82,16 @@ import de.sub.goobi.helper.exceptions.SwapException;
 public class CSICOAIImport implements IImportPlugin, IPlugin {
 
 	private static final Logger logger = Logger.getLogger(CSICOAIImport.class);
-
+	
 	private static final String NAME = "CSICOAIImport";
-	private static final String VERSION = "1.0.20120920";
+	private static final String VERSION = "1.0.20121008.1";
 	private static final String XSLT_PATH = ConfigMain.getParameter("xsltFolder") + "MARC21slim2MODS3.xsl";
 	// private static final String XSLT_PATH = "resources/" + "MARC21slim2MODS3.xsl";
 	// private static final String MODS_MAPPING_FILE = "resources/" + "mods_map.xml";
 	private static final String MODS_MAPPING_FILE = ConfigMain.getParameter("xsltFolder") + "mods_map.xml";
 	private static final String TEMP_DIRECTORY = ConfigMain.getParameter("tempfolder");
+	protected static final String METADATA_LOGICAL_PAGE_NUMBER = "logicalPageNumber";
+	protected static final String METADATA_PHYSICAL_PAGE_NUMBER = "physPageNumber";
 
 	private static final String idPrefix = "";
 	public final File exportFolder = new File(ConfigPlugins.getPluginConfig(this).getString("importFolder", "/opt/digiverso/ftp-import/"));
@@ -91,6 +99,10 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 	public final String outputEncoding = (ConfigPlugins.getPluginConfig(this).getString("outputEncoding", "iso-8859-15"));
 	public final String inputEncoding = (ConfigPlugins.getPluginConfig(this).getString("inputEncoding", "utf-8"));
 	public final String conversionEncoding = (ConfigPlugins.getPluginConfig(this).getString("conversionEncoding", "iso-8859-15"));
+	private final boolean deleteOriginalImages = ConfigPlugins.getPluginConfig(this).getBoolean("deleteOriginalImages", true);
+	private final boolean deleteTempFiles = ConfigPlugins.getPluginConfig(this).getBoolean("deleteTempFiles", false);
+	private final boolean copyImages = ConfigPlugins.getPluginConfig(this).getBoolean("copyImages", true);
+	private final boolean updateExistingRecords = ConfigPlugins.getPluginConfig(this).getBoolean("updateExistingRecords", true);
 
 	private String data;
 
@@ -103,16 +115,19 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 	private Map<String, String> logicalStructTypeMap = new HashMap<String, String>();
 	private Map<String, String> projectsCollectionsMap = new HashMap<String, String>();
 	private Map<String, File> recordImageMap = new HashMap<String, File>();
+	private HashMap<String, Boolean> idMap = new HashMap<String, Boolean>(); // maps to true all records with reoccuring ids (PPNs)
 
+	private String identifierSuffix;
 	private String currentIdentifier;
 	private String currentTitle;
 	private String currentAuthor;
 	private List<String> currentCollectionList;
+	private File currentImageFolder;
 
-	private boolean deleteTempFiles = false;
-	private boolean copyImages = true;
-	private boolean deleteOriginalImages = true;
-	private boolean updateExistingRecords = true;
+	// private boolean deleteTempFiles = false;
+	// private boolean copyImages = true;
+	// private boolean deleteOriginalImages = true;
+	// private boolean updateExistingRecords = true;
 
 	public CSICOAIImport() {
 		marcStructTypeMap.put("?monographic", "Monograph");
@@ -153,6 +168,7 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 		topStructMap.put("Series", "SerialVolume");
 
 		projectsCollectionsMap.put("0001_POQ", "BIBLIOTECAS#Museo Nacional de Ciencias Naturales (Biblioteca)");
+		projectsCollectionsMap.put("0004_PBM", "BIBLIOTECAS#Instituto de Cientias Matemáticas (Biblioteca Jorqe Juan)");
 		projectsCollectionsMap.put("0005_BETN", "BIBLIOTECAS#Centro de Ciencias Humanas y Sociales (Biblioteca Tomás Navarro Tomás)");
 		// projectsCollectionsMap.put("0006_PMSC", "BIBLIOTECAS#Centro de Ciencias Humanas y Sociales (Biblioteca Tomás Navarro Tomás)");
 		// projectsCollectionsMap.put("0006_PMSC_G_EEA", "BIBLIOTECAS#Centro de Estudios árabes GR-EEA");
@@ -180,6 +196,7 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 			// Data conversion
 			data = r.getData();
 			File imageDir = recordImageMap.get(r.getId());
+			currentImageFolder = imageDir;
 			currentIdentifier = r.getId();
 
 			File projectDir = imageDir.getParentFile();
@@ -195,7 +212,8 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 				currentCollectionList.add(collection);
 			}
 			Fileformat ff = convertData();
-
+			correctId(ff);
+			addPages(ff, imageDir);
 			ImportObject io = new ImportObject();
 
 			if (ff != null) {
@@ -242,6 +260,70 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 		return ret;
 	}
 
+	private void addPages(Fileformat ff, File imageDir) {
+
+		try {
+			DocStruct topLogStruct = ff.getDigitalDocument().getLogicalDocStruct();
+			if (topLogStruct.getType().isAnchor()) {
+				topLogStruct = topLogStruct.getAllChildren().get(0);
+			}
+
+			String[] imageFileArray = imageDir.list(CommonUtils.ImageFilter);
+			if (imageFileArray == null || imageFileArray.length == 0) {
+				File[] subDirs = imageDir.listFiles(CommonUtils.DirFilter);
+				if (subDirs != null && subDirs.length > 0) {
+					for (File dir : subDirs) {
+						String[] imageList = dir.list(CommonUtils.ImageFilter);
+						if (imageList != null && imageList.length > 0) {
+							imageFileArray = imageList;
+							break;
+						}
+					}
+				}
+
+				if (imageFileArray == null || imageFileArray.length == 0) {
+					logger.error("Found no images to identify with this process");
+					return;
+				}
+				
+			}
+			Arrays.sort(imageFileArray);
+
+			int count = 1;
+			for (String filename : imageFileArray) {
+				DocStruct page = ff.getDigitalDocument().createDocStruct(prefs.getDocStrctTypeByName("page"));
+
+				MetadataType logpageType = prefs.getMetadataTypeByName(METADATA_LOGICAL_PAGE_NUMBER);
+				MetadataType physpageType = prefs.getMetadataTypeByName(METADATA_PHYSICAL_PAGE_NUMBER);
+				Metadata mdLogPage = new Metadata(logpageType);
+				Metadata mdPhysPage = new Metadata(physpageType);
+				mdLogPage.setValue("uncounted");
+				mdPhysPage.setValue(""+count);
+				count++;
+				
+				page.addMetadata(mdLogPage);
+				page.addMetadata(mdPhysPage);
+				topLogStruct.addReferenceTo(page, "logical_physical");
+				ff.getDigitalDocument().getPhysicalDocStruct().addChild(page);
+
+			}
+
+		} catch (TypeNotAllowedForParentException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		} catch (PreferencesException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		} catch (TypeNotAllowedAsChildException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		} catch (MetadataTypeNotAllowedException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+
+	}
+
 	/**
 	 * Uses image directories to retrieve metadata via oai
 	 * 
@@ -250,19 +332,19 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 	public List<Record> generateRecordsFromFilenames(List<String> filenames) {
 
 		List<Record> recordList = new ArrayList<Record>();
-
+		HashMap<Record, File> updateRecordMap = new HashMap<Record, File>();
 		for (String dirString : filenames) {
-			
-				String[] parts = dirString.split("::");
-				if (parts == null || parts.length != 2) {
-					// return recordList;
-					continue;
-				}
-				String projectName = parts[0].trim();
-				String dirName = parts[1].trim();
-				File projectDir = new File(exportFolder, projectName);
-				File recordDir = new File(projectDir, dirName);
-			
+
+			String[] parts = dirString.split("::");
+			if (parts == null || parts.length != 2) {
+				// return recordList;
+				continue;
+			}
+			String projectName = parts[0].trim();
+			String dirName = parts[1].trim();
+			File projectDir = new File(exportFolder, projectName);
+			File recordDir = new File(projectDir, dirName);
+
 			// Get the aleph-Identifier from the filename
 			parts = dirName.split("_");
 			String idString = null;
@@ -272,17 +354,44 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 				continue;
 			}
 
+			int first = 0;
 			if (parts[0].contentEquals("M")) {
-				idString = parts[1];
-			} else if (parts.length > 1) {
-				idString = parts[0];
+				first = 1;
 			}
+			idString = parts[first];
 
 			int last = parts.length - 1;
-			if (!parts[last].contentEquals(idString) || parts[last].contentEquals("V00")) {
-				// We have a volume number or pieceDesignation
-				idSuffix = parts[last];
+
+			String volumeNo = null;
+			String pieceDesignation = null;
+			if (last > first) {
+				int lastWOVolume = last;
+				if (parts[last].startsWith("V")) {
+					lastWOVolume = last - 1;
+					volumeNo = parts[last];
+				}
+				if (lastWOVolume > first) {
+					pieceDesignation = "";
+					for (int i = first + 1; i <= lastWOVolume; i++) {
+						pieceDesignation += (parts[i] + "_");
+					}
+					if (pieceDesignation.length() > 0) {
+						pieceDesignation = pieceDesignation.substring(0, pieceDesignation.length() - 1);
+					}
+				}
+
 			}
+
+			if (pieceDesignation != null && (volumeNo == null || volumeNo.contentEquals("V00"))) {
+				// We have a pieceDesignation, but no or trivial VolumeNo
+				idSuffix = pieceDesignation;
+			} else if (volumeNo != null) {
+				idSuffix = volumeNo;
+			}
+			// if (!parts[last].contentEquals(idString) || parts[last].contentEquals("V00")) {
+			// // We have a volume number or pieceDesignation
+			// idSuffix = parts[last];
+			// }
 
 			if (idString == null) {
 				continue;
@@ -296,26 +405,41 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 				continue;
 			}
 
+			String idNumber = idString.replaceAll("\\D", "");
+			if (idMap.get(idNumber) == null) {
+				idMap.put(idNumber, false);
+			} else {
+				idMap.put(idNumber, true);
+			}
+
 			Record record = new Record();
-			record.setId(idString + "_" + idSuffix);
+			if (idSuffix != null && !idSuffix.isEmpty()) {
+				record.setId(idString + "_" + idSuffix);
+			} else {
+				record.setId(idString);
+			}
 			record.setData(marcRecord);
 			// recordList.add(record);
-			recordImageMap.put(record.getId(), recordDir);
 
-			File oldFile = searchForExistingData(record.getId());
+			File oldFile = searchForExistingData(record);
+			recordImageMap.put(record.getId(), recordDir);
 			if (oldFile != null) {
 				if (updateExistingRecords) {
 					logger.info("Found existing record. Updating.");
-					if (!updateOldRecord(record, oldFile)) {
-						Helper.setFehlerMeldung("Error updating record " + record.getId());
-					} else {
-						Helper.setMeldung("Updated process " + record.getId());
-					}
+					updateRecordMap.put(record, oldFile);
 				} else {
 					Helper.setFehlerMeldung("Cannot import record " + record.getId() + " : A process with this title already exists.");
 				}
 			} else {
 				recordList.add(record);
+			}
+		}
+
+		for (Record record : updateRecordMap.keySet()) {
+			if (!updateOldRecord(record, updateRecordMap.get(record))) {
+				Helper.setFehlerMeldung("Error updating record " + record.getId());
+			} else {
+				Helper.setMeldung("Updated process " + record.getId());
 			}
 		}
 
@@ -334,6 +458,7 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 		File imageDir = recordImageMap.get(record.getId());
 
 		currentIdentifier = record.getId();
+		currentImageFolder = imageDir;
 		data = record.getData();
 
 		File projectDir = imageDir.getParentFile();
@@ -348,6 +473,16 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 			currentCollectionList.add(collection);
 		}
 		Fileformat ff = convertData();
+		correctId(ff);
+		
+		File[] imageList = imageDir.listFiles(CommonUtils.ImageFilter);
+		if(imageList == null || imageList.length == 0) {			
+			File goobiImageDir = new File(oldMetaFile.getParent(), "images");
+			addPages(ff, goobiImageDir);
+		} else {
+			addPages(ff, imageDir);
+		}
+		
 		logger.info("Replacing old matadata in metadata folder " + oldMetaFile.getParent() + " with new data");
 
 		// renaming old metadata files to keep as backup
@@ -365,7 +500,9 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 			String fileName = newMetaFileName;
 			logger.debug("Writing '" + fileName + "' into existing folder...");
 			ff.write(fileName);
-			copyImageFiles(imageDir);
+			if(imageList != null && imageList.length>0) {				
+				copyImageFiles(imageDir);
+			}
 			// getting anchor file
 			if (!importFolder.isDirectory()) {
 				logger.warn("no hotfolder found. Cannot get anchor files");
@@ -641,7 +778,8 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 				DocStruct dsBoundBook = dd.createDocStruct(prefs.getDocStrctTypeByName("BoundBook"));
 				dd.setPhysicalDocStruct(dsBoundBook);
 				// Collect MODS metadata
-				ModsUtils.parseModsSection(MODS_MAPPING_FILE, prefs, dsVolume, dsBoundBook, dsAnchor, eleMods);
+				String[] volumeInfos = parseFolderName(currentImageFolder.getName());
+				ModsUtils.parseModsSection(MODS_MAPPING_FILE, prefs, dsVolume, dsBoundBook, dsAnchor, eleMods, volumeInfos[0]);
 				// currentIdentifier = ModsUtils.getIdentifier(prefs, dsVolume);
 				currentTitle = ModsUtils.getTitle(prefs, dsVolume);
 				currentAuthor = ModsUtils.getAuthor(prefs, dsVolume);
@@ -789,7 +927,7 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 
 	@Override
 	public void setFile(File importFile) {
-			}
+	}
 
 	@Override
 	public List<String> splitIds(String ids) {
@@ -805,8 +943,6 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 	public List<String> getAllFilenames() {
 		ArrayList<String> projectList = new ArrayList<String>(projectsCollectionsMap.keySet());
 		ArrayList<String> filenameList = new ArrayList<String>();
-		// filenameList.add("Dummy");
-		// filenameList.add(exportFolder.getAbsolutePath());
 		try {
 			for (String project : projectList) {
 				File projectDir = new File(exportFolder, project);
@@ -824,8 +960,21 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 					if (dirList != null && dirList.length > 0) {
 						for (File recordDir : dirList) {
 							if (recordDir.getName().startsWith("M_")) {
+								// if(updateExistingRecords) {
 								filenameList.add(project + "::\t" + recordDir.getName());
+								// } else {
+								// String identifier = recordDir.getName().split("_")[0];
+								// if(identifier.contentEquals("M")) {
+								// identifier = recordDir.getName().split("_")[1];
+								// }
+								// if(searchForExistingData(identifier) == null) {
+								// filenameList.add(project + "::\t" + recordDir.getName());
+								// } else {
+								// System.out.println("Found record " + recordDir.getName());
+								// }
+								// }
 							}
+
 						}
 					}
 				}
@@ -843,19 +992,19 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 
 	@Override
 	public void deleteFiles(List<String> selectedFilenames) {
-			String id = getProcessTitle();
-			if(id != null) {
-				id = id.replace(".xml", "");
-				if(importFolder.isDirectory() && importFolder.listFiles() != null) {
-					for (File file : importFolder.listFiles()) {
-						if(file.getName().contains(id)) {
-								CommonUtils.deleteAllFiles(file);
-						}
-					}
-				}
-						
-			}
-		}
+		// String id = getProcessTitle();
+		// if(id != null) {
+		// id = id.replace(".xml", "");
+		// if(importFolder.isDirectory() && importFolder.listFiles() != null) {
+		// for (File file : importFolder.listFiles()) {
+		// if(file.getName().contains(id)) {
+		// CommonUtils.deleteAllFiles(file);
+		// }
+		// }
+		// }
+		//
+		// }
+	}
 
 	@Override
 	public List<DocstructElement> getCurrentDocStructs() {
@@ -925,16 +1074,22 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 			return;
 		}
 
+		File[] imageFiles = imageDir.listFiles(CommonUtils.ImageFilter);
+		if (imageFiles == null) {
+			logger.debug("No images to copy");
+			return;
+		}
+
 		// get temp dir
 		File tempDir = new File(importFolder, getProcessTitle().replace(".xml", ""));
 		File tempImageDir = new File(tempDir, "images");
 		File tempTiffDir = new File(tempImageDir, getProcessTitle().replace(".xml", "") + "_tif");
-//		File tempOrigDir = new File(tempImageDir, "orig_" + getProcessTitle().replace(".xml", "") + "_tif");
+		// File tempOrigDir = new File(tempImageDir, "orig_" + getProcessTitle().replace(".xml", "") + "_tif");
 		tempTiffDir.mkdirs();
 
 		// parse all image Files and write them into new Files in the import
 		// directory
-		List<File> images = Arrays.asList(imageDir.listFiles(CommonUtils.ImageFilter));
+		List<File> images = Arrays.asList(imageFiles);
 		try {
 			for (File imageFile : images) {
 				String filename = imageFile.getName();
@@ -943,10 +1098,10 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 					logger.debug("Copying image " + filename);
 				} else {
 					CommonUtils.moveFile(imageFile, new File(tempTiffDir, filename), true);
-//					if (!imageFile.renameTo(new File(tempTiffDir, filename))) {
-//						copyFile(imageFile, new File(tempTiffDir, filename));
-//						imageFile.delete();
-//					}
+					// if (!imageFile.renameTo(new File(tempTiffDir, filename))) {
+					// copyFile(imageFile, new File(tempTiffDir, filename));
+					// imageFile.delete();
+					// }
 				}
 			}
 		} catch (Exception e) {
@@ -1075,21 +1230,69 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 		return answer;
 	}
 
+	private String[] parseFolderName(String name) {
+
+		String[] values = new String[] { null, "00" };
+
+		if (name.startsWith("M_")) {
+			name = name.substring(2);
+		}
+
+		String[] parts = name.split("_");
+		int last = parts.length - 1;
+		if (parts.length > 2) {
+
+			int lastWOVolumeNo = last;
+			if (parts[last].startsWith("V")) {
+				lastWOVolumeNo = last - 1;
+				values[1] = parts[last].replace("V", "");
+			}
+			values[0] = "";
+			for (int i = 1; i <= lastWOVolumeNo; i++) {
+				values[0] = values[0] + "_" + parts[i];
+			}
+			values[0] = values[0].substring(0, values[0].length() - 1);
+			// values[1] = parts[last].replace("V", "");
+			// return parts[last-1];
+		} else if (parts[last].startsWith("V")) {
+			values[1] = parts[last].replace("V", "");
+		} else {
+			values[0] = parts[last];
+		}
+
+		if (values[1] != null && !values[1].isEmpty() && !values[1].contentEquals("V00")) {
+			identifierSuffix = "V" + values[1];
+		} else {
+			identifierSuffix = values[0];
+		}
+
+		return values;
+
+	}
+
 	/**
 	 * returns the metadatafile meta.xml if a prozess of this name was found, null otherwise
 	 * 
 	 * @param processTitle
 	 * @return
 	 */
-	private File searchForExistingData(String processTitle) {
+	private File searchForExistingData(Record r) {
+		String processTitle = r.getId();
 		String metsFilePath, processDataDirectory;
 		ProzessDAO dao = new ProzessDAO();
 
 		try {
 			List<Prozess> processList = dao.search("from Prozess where titel LIKE '%" + processTitle + "'");
 
+			if(processList == null || processList.isEmpty()) {
+				String id = processTitle.split("_")[0] + "_V00";
+				processList = dao.search("from Prozess where titel LIKE '%" + id + "'");
+			}
+			
 			if (processList != null && !processList.isEmpty()) {
 				Prozess p = processList.get(0);
+				r.setId(p.getTitel());
+//				p.setTitel(p.getTitel().split("_")[0] + "_" + processTitle);
 				logger.info("Found existing process '" + p.getTitel() + "'...");
 				metsFilePath = p.getMetadataFilePath();
 				processDataDirectory = p.getProcessDataDirectory();
@@ -1119,7 +1322,31 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 
 	@Override
 	public String getId() {
-		return null;
+		return getDescription();
+	}
+
+	private void correctId(Fileformat ff) {
+
+		try {
+			DocStruct topStruct = ff.getDigitalDocument().getLogicalDocStruct();
+			String anchorIdentifier = null;
+			String logIdentifier = topStruct.getAllMetadataByType(prefs.getMetadataTypeByName("CatalogIDDigital")).get(0).getValue();
+			if (topStruct.getType().isAnchor()) {
+				anchorIdentifier = logIdentifier;
+				topStruct = ff.getDigitalDocument().getLogicalDocStruct().getAllChildren().get(0);
+				logIdentifier = topStruct.getAllMetadataByType(prefs.getMetadataTypeByName("CatalogIDDigital")).get(0).getValue();
+			}
+			if ((anchorIdentifier != null && anchorIdentifier.contentEquals(logIdentifier)) || idMap.get(logIdentifier.replaceAll("\\D", "")) != null
+					&& idMap.get(logIdentifier.replaceAll("\\D", "")) == true) {
+				// id already exists: add volume or pieceDesignation to it
+				String newId = logIdentifier + "_" + identifierSuffix;
+				topStruct.getAllMetadataByType(prefs.getMetadataTypeByName("CatalogIDDigital")).get(0).setValue(newId);
+			}
+		} catch (PreferencesException e) {
+			logger.error("Failed correcting PPN");
+		} catch (IndexOutOfBoundsException e) {
+			logger.error("Failed correcting PPN");
+		}
 	}
 
 }
