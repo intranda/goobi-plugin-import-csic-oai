@@ -1,8 +1,5 @@
 package de.intranda.goobi.plugins;
 
-import gov.loc.mets.DivType;
-
-import java.awt.event.InputEvent;
 import java.io.BufferedInputStream;
 import java.io.BufferedReader;
 import java.io.ByteArrayInputStream;
@@ -12,10 +9,8 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.InputStreamReader;
 import java.io.StringReader;
 import java.io.StringWriter;
-import java.math.BigInteger;
 import java.net.URL;
 import java.net.URLConnection;
 import java.util.ArrayList;
@@ -28,7 +23,6 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import net.xeoh.plugins.base.annotations.PluginImplementation;
-import net.xeoh.plugins.base.annotations.configuration.IsDisabled;
 
 import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang.StringUtils;
@@ -42,7 +36,6 @@ import org.goobi.production.enums.PluginType;
 import org.goobi.production.plugin.interfaces.IImportPlugin;
 import org.goobi.production.plugin.interfaces.IPlugin;
 import org.goobi.production.properties.ImportProperty;
-import org.jdom.Content;
 import org.jdom.Document;
 import org.jdom.Element;
 import org.jdom.JDOMException;
@@ -51,10 +44,8 @@ import org.jdom.input.SAXBuilder;
 import org.jdom.output.XMLOutputter;
 import org.jdom.transform.XSLTransformer;
 
-import ugh.dl.ContentFile;
 import ugh.dl.DigitalDocument;
 import ugh.dl.DocStruct;
-import ugh.dl.FileSet;
 import ugh.dl.Fileformat;
 import ugh.dl.Metadata;
 import ugh.dl.MetadataType;
@@ -82,9 +73,9 @@ import de.sub.goobi.helper.exceptions.SwapException;
 public class CSICOAIImport implements IImportPlugin, IPlugin {
 
 	private static final Logger logger = Logger.getLogger(CSICOAIImport.class);
-	
+
 	private static final String NAME = "CSICOAIImport";
-	private static final String VERSION = "1.0.20121009";
+	private static final String VERSION = "1.0.20121017";
 	private static final String XSLT_PATH = ConfigMain.getParameter("xsltFolder") + "MARC21slim2MODS3.xsl";
 	// private static final String XSLT_PATH = "resources/" + "MARC21slim2MODS3.xsl";
 	// private static final String MODS_MAPPING_FILE = "resources/" + "mods_map.xml";
@@ -285,7 +276,7 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 					logger.error("Found no images to identify with this process");
 					return;
 				}
-				
+
 			}
 			Arrays.sort(imageFileArray);
 
@@ -298,9 +289,9 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 				Metadata mdLogPage = new Metadata(logpageType);
 				Metadata mdPhysPage = new Metadata(physpageType);
 				mdLogPage.setValue("uncounted");
-				mdPhysPage.setValue(""+count);
+				mdPhysPage.setValue("" + count);
 				count++;
-				
+
 				page.addMetadata(mdLogPage);
 				page.addMetadata(mdPhysPage);
 				topLogStruct.addReferenceTo(page, "logical_physical");
@@ -473,16 +464,17 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 			currentCollectionList.add(collection);
 		}
 		Fileformat ff = convertData();
+		addProject(ff, projectDir.getName());
 		correctId(ff);
-		
+
 		File[] imageList = imageDir.listFiles(CommonUtils.ImageFilter);
-		if(imageList == null || imageList.length == 0) {			
+		if (imageList == null || imageList.length == 0) {
 			File goobiImageDir = new File(oldMetaFile.getParent(), "images");
 			addPages(ff, goobiImageDir);
 		} else {
 			addPages(ff, imageDir);
 		}
-		
+
 		logger.info("Replacing old matadata in metadata folder " + oldMetaFile.getParent() + " with new data");
 
 		// renaming old metadata files to keep as backup
@@ -500,7 +492,7 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 			String fileName = newMetaFileName;
 			logger.debug("Writing '" + fileName + "' into existing folder...");
 			ff.write(fileName);
-			if(imageList != null && imageList.length>0) {				
+			if (imageList != null && imageList.length > 0) {
 				copyImageFiles(imageDir);
 			}
 			// getting anchor file
@@ -721,14 +713,14 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 								dsType = marcStructTypeMap.get("?" + eleIssuance.getTextTrim());
 							}
 						}
-						Element eleFrequency = eleOriginInfo.getChild("frequency", null);
-						if (eleFrequency != null && eleFrequency.getValue() != null && !eleFrequency.getValue().isEmpty()) {
-							// it has a frequency, therefore gets an anchor
-							dsAnchorType = anchorMap.get(dsType);
-							if (dsAnchorType == null) {
-								dsAnchorType = "Series";
-							}
-						}
+						// Element eleFrequency = eleOriginInfo.getChild("frequency", null);
+						// if (eleFrequency != null && eleFrequency.getValue() != null && !eleFrequency.getValue().isEmpty()) {
+						// // it has a frequency, therefore gets an anchor
+						// dsAnchorType = anchorMap.get(dsType);
+						// if (dsAnchorType == null) {
+						// dsAnchorType = "Series";
+						// }
+						// }
 					}
 				}
 
@@ -761,6 +753,14 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 					}
 				}
 
+				String[] volumeInfos = parseFolderName(currentImageFolder.getName());
+				if (idMap.get(volumeInfos[0]) != null && idMap.get(volumeInfos[0]) == true) {
+					// This volume is part of a Series/Multivolume work
+					if (dsAnchorType == null) {
+						dsAnchorType = anchorMap.get(dsType);
+					}
+				}
+
 				logger.debug("Docstruct type: " + dsType);
 				DocStruct dsVolume = dd.createDocStruct(prefs.getDocStrctTypeByName(dsType));
 				if (dsVolume == null) {
@@ -778,8 +778,7 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 				DocStruct dsBoundBook = dd.createDocStruct(prefs.getDocStrctTypeByName("BoundBook"));
 				dd.setPhysicalDocStruct(dsBoundBook);
 				// Collect MODS metadata
-				String[] volumeInfos = parseFolderName(currentImageFolder.getName());
-				ModsUtils.parseModsSection(MODS_MAPPING_FILE, prefs, dsVolume, dsBoundBook, dsAnchor, eleMods, volumeInfos[0]);
+				ModsUtils.parseModsSection(MODS_MAPPING_FILE, prefs, dsVolume, dsBoundBook, dsAnchor, eleMods, volumeInfos[1]);
 				// currentIdentifier = ModsUtils.getIdentifier(prefs, dsVolume);
 				currentTitle = ModsUtils.getTitle(prefs, dsVolume);
 				currentAuthor = ModsUtils.getAuthor(prefs, dsVolume);
@@ -1038,16 +1037,18 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 	private void addProject(Fileformat ff, String projectName) {
 		try {
 			DocStruct topStruct = ff.getDigitalDocument().getLogicalDocStruct();
-			Metadata projectInfo = new Metadata(prefs.getMetadataTypeByName("ProjectIdentifier"));
-			projectInfo.setValue(projectName);
-			topStruct.addMetadata(projectInfo);
-
-			// set also for first subSrtuct if topStruct was an anchor
-			if (topStruct.getType().isAnchor()) {
-				DocStruct subStruct = topStruct.getAllChildren().get(0);
-				projectInfo = new Metadata(prefs.getMetadataTypeByName("ProjectIdentifier"));
+			if (topStruct.getAllMetadataByType(prefs.getMetadataTypeByName("ProjectIdentifier")).isEmpty()) {
+				Metadata projectInfo = new Metadata(prefs.getMetadataTypeByName("ProjectIdentifier"));
 				projectInfo.setValue(projectName);
-				subStruct.addMetadata(projectInfo);
+				topStruct.addMetadata(projectInfo);
+
+				// set also for first subSrtuct if topStruct was an anchor
+				if (topStruct.getType().isAnchor()) {
+					DocStruct subStruct = topStruct.getAllChildren().get(0);
+					projectInfo = new Metadata(prefs.getMetadataTypeByName("ProjectIdentifier"));
+					projectInfo.setValue(projectName);
+					subStruct.addMetadata(projectInfo);
+				}
 			}
 
 		} catch (PreferencesException e) {
@@ -1232,38 +1233,39 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 
 	private String[] parseFolderName(String name) {
 
-		String[] values = new String[] { null, "00" };
+		String[] values = new String[] { null, null, "00" };
 
 		if (name.startsWith("M_")) {
 			name = name.substring(2);
 		}
 
 		String[] parts = name.split("_");
+		values[0] = parts[0];
 		int last = parts.length - 1;
 		if (parts.length > 2) {
 
 			int lastWOVolumeNo = last;
 			if (parts[last].startsWith("V")) {
 				lastWOVolumeNo = last - 1;
-				values[1] = parts[last].replace("V", "");
+				values[2] = parts[last].replace("V", "");
 			}
-			values[0] = "";
+			values[1] = "";
 			for (int i = 1; i <= lastWOVolumeNo; i++) {
-				values[0] = values[0] + "_" + parts[i];
+				values[1] = values[1] + "_" + parts[i];
 			}
-			values[0] = values[0].substring(0, values[0].length() - 1);
+			// values[0] = values[0].substring(0, values[0].length() - 1);
 			// values[1] = parts[last].replace("V", "");
 			// return parts[last-1];
 		} else if (parts[last].startsWith("V")) {
-			values[1] = parts[last].replace("V", "");
+			values[2] = parts[last].replace("V", "");
 		} else {
-			values[0] = parts[last];
+			values[1] = parts[last];
 		}
 
-		if (values[1] != null && !values[1].isEmpty() && !values[1].contentEquals("V00")) {
-			identifierSuffix = "V" + values[1];
+		if (values[2] != null && !values[2].isEmpty() && !values[2].contentEquals("00")) {
+			identifierSuffix = "V" + values[2];
 		} else {
-			identifierSuffix = values[0];
+			identifierSuffix = values[1];
 		}
 
 		return values;
@@ -1284,15 +1286,15 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 		try {
 			List<Prozess> processList = dao.search("from Prozess where titel LIKE '%" + processTitle + "'");
 
-			if(processList == null || processList.isEmpty()) {
+			if (processList == null || processList.isEmpty()) {
 				String id = processTitle.split("_")[0] + "_V00";
 				processList = dao.search("from Prozess where titel LIKE '%" + id + "'");
 			}
-			
+
 			if (processList != null && !processList.isEmpty()) {
 				Prozess p = processList.get(0);
 				r.setId(p.getTitel());
-//				p.setTitel(p.getTitel().split("_")[0] + "_" + processTitle);
+				// p.setTitel(p.getTitel().split("_")[0] + "_" + processTitle);
 				logger.info("Found existing process '" + p.getTitel() + "'...");
 				metsFilePath = p.getMetadataFilePath();
 				processDataDirectory = p.getProcessDataDirectory();
@@ -1325,27 +1327,105 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 		return getDescription();
 	}
 
-	private void correctId(Fileformat ff) {
+	public void correctId(Fileformat ff) {
 
 		try {
 			DocStruct topStruct = ff.getDigitalDocument().getLogicalDocStruct();
 			String anchorIdentifier = null;
+			String anchorName = null;
 			String logIdentifier = topStruct.getAllMetadataByType(prefs.getMetadataTypeByName("CatalogIDDigital")).get(0).getValue();
 			if (topStruct.getType().isAnchor()) {
 				anchorIdentifier = logIdentifier;
 				topStruct = ff.getDigitalDocument().getLogicalDocStruct().getAllChildren().get(0);
 				logIdentifier = topStruct.getAllMetadataByType(prefs.getMetadataTypeByName("CatalogIDDigital")).get(0).getValue();
+				anchorName = ff.getDigitalDocument().getLogicalDocStruct().getAllMetadataByType(prefs.getMetadataTypeByName("TitleDocMain")).get(0)
+						.getValue();
 			}
 			if ((anchorIdentifier != null && anchorIdentifier.contentEquals(logIdentifier)) || idMap.get(logIdentifier.replaceAll("\\D", "")) != null
 					&& idMap.get(logIdentifier.replaceAll("\\D", "")) == true) {
 				// id already exists: add volume or pieceDesignation to it
 				String newId = logIdentifier + "_" + identifierSuffix;
+				newId = newId.replaceAll("__", "_");
 				topStruct.getAllMetadataByType(prefs.getMetadataTypeByName("CatalogIDDigital")).get(0).setValue(newId);
+				if (anchorIdentifier != null && anchorIdentifier.startsWith("CSIC13")) {
+					ff.getDigitalDocument().getLogicalDocStruct().getAllMetadataByType(prefs.getMetadataTypeByName("CatalogIDDigital")).get(0)
+							.setValue(logIdentifier);
+				}
+				// String anchorName =
+				// ff.getDigitalDocument().getLogicalDocStruct().getAllMetadataByType(prefs.getMetadataTypeByName("TitleDocMain")).get(0).getValue();
+				if (anchorName != null && anchorName.startsWith("CSIC13")) {
+					ff.getDigitalDocument().getLogicalDocStruct().getAllMetadataByType(prefs.getMetadataTypeByName("TitleDocMain")).get(0)
+							.setValue(logIdentifier);
+				}
+			} else if (anchorName != null && anchorName.startsWith("CSIC13")) {
+				// irrelevant anchor. remove if the topStruct can exist on its own
+				if (topStruct.getType().getName().contentEquals("SerialVolume")) {
+					topStruct.setType(prefs.getDocStrctTypeByName("Monograph"));
+					ff.getDigitalDocument().setLogicalDocStruct(topStruct);
+					verifyDocStructIntegrity(topStruct);
+				}
+				if (topStruct.getType().getName().contentEquals("Manuscript")) {
+					topStruct.setType(prefs.getDocStrctTypeByName("SingleManuscript"));
+					ff.getDigitalDocument().setLogicalDocStruct(topStruct);
+					verifyDocStructIntegrity(topStruct);
+				}
 			}
 		} catch (PreferencesException e) {
 			logger.error("Failed correcting PPN");
 		} catch (IndexOutOfBoundsException e) {
 			logger.error("Failed correcting PPN");
+		}
+	}
+
+	/**
+	 * Removes and childen and metadata not allowed for this docStructType
+	 * 
+	 * @param docStruct
+	 */
+	private void verifyDocStructIntegrity(DocStruct docStruct) {
+		if (docStruct.getAllChildren() != null) {
+			ArrayList<DocStruct> childrenToRemove = new ArrayList<DocStruct>();
+			for (DocStruct child : docStruct.getAllChildren()) {
+				if (!docStruct.isDocStructTypeAllowedAsChild(child.getType())) {
+					logger.warn("Removing child " + child.getType().getName() + " from DocStruct " + docStruct.getType().getName());
+					childrenToRemove.add(child);
+					// docStruct.removeChild(child);
+				}
+			}
+			for (DocStruct docStruct2 : childrenToRemove) {
+				docStruct.removeChild(docStruct2);
+			}
+		}
+		if (docStruct.getAllMetadata() != null) {
+			ArrayList<Metadata> metadataToRemove = new ArrayList<Metadata>();
+			HashMap<MetadataType, Boolean> existingMetadataMap = new HashMap<MetadataType, Boolean>();
+			for (Metadata metadata : docStruct.getAllMetadata()) {
+				MetadataType type = metadata.getType();
+				boolean isAllowed = false;
+				for (MetadataType mdType : docStruct.getType().getAllMetadataTypes()) {
+					if (mdType.getName().contentEquals(type.getName())) {
+						isAllowed = true;
+						if (docStruct.getType().getNumberOfMetadataType(mdType).contentEquals("1o") && existingMetadataMap.get(mdType) != null) {
+							// a metadata of this type already exists, although only one instance is permitted. Delete this instance
+							isAllowed = false;
+						} else {
+							existingMetadataMap.put(mdType, true);
+						}
+
+					}
+
+				}
+
+				if (!isAllowed) {
+					// if (!docStruct.getType().isMDTypeAllowed(type)) {
+					logger.warn("Removing metadata " + metadata.getType().getName() + " from DocStruct " + docStruct.getType().getName());
+					metadataToRemove.add(metadata);
+					// docStruct.removeMetadata(metadata);
+				}
+			}
+			for (Metadata metadata : metadataToRemove) {
+				docStruct.removeMetadata(metadata);
+			}
 		}
 	}
 

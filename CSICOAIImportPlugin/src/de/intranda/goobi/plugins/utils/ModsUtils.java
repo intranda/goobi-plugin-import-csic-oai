@@ -302,7 +302,7 @@ public class ModsUtils {
 						}
 
 					} catch (MetadataTypeNotAllowedException e) {
-						logger.error(e);
+						logger.warn(e.getMessage());
 					}
 					// }
 				}
@@ -449,6 +449,12 @@ public class ModsUtils {
 										continue;
 								} else if (mdType.getName().contentEquals("CurrentNoSorting")) {
 									value = correctCurrentNoSorting(value);
+								} else if (mdType.getName().contentEquals("TitleDocParallel")) {
+									seriesName = value;
+									String serId = seriesInfo.get(seriesName);
+									if(serId != null && !serId.isEmpty()) {
+										seriesID = serId;
+									}
 								}
 								
 
@@ -807,7 +813,11 @@ public class ModsUtils {
 						return "";
 					}
 				}
-				return correctCurrentNoSorting(split[0]);
+				if(split.length > 1) {					
+					return correctCurrentNoSorting(split[0]);
+				} else {
+					return "";
+				}
 			}
 			
 		}
