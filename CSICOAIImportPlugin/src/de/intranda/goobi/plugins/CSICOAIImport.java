@@ -75,7 +75,7 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 	private static final Logger logger = Logger.getLogger(CSICOAIImport.class);
 
 	private static final String NAME = "CSICOAIImport";
-	private static final String VERSION = "1.0.20121017";
+	private static final String VERSION = "1.0.20121114";
 	private static final String XSLT_PATH = ConfigMain.getParameter("xsltFolder") + "MARC21slim2MODS3.xsl";
 	// private static final String XSLT_PATH = "resources/" + "MARC21slim2MODS3.xsl";
 	// private static final String MODS_MAPPING_FILE = "resources/" + "mods_map.xml";
@@ -169,7 +169,7 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 		projectsCollectionsMap.put("0010_CMTN", "BIBLIOTECAS#Centro de Ciencias Humanas y Sociales (Biblioteca Tomás Navarro Tomás)");
 		projectsCollectionsMap.put("0012_CIP", "BIBLIOTECAS#Museo Nacional de Ciencias Naturales (Biblioteca)");
 		projectsCollectionsMap.put("0013_JAE", "BIBLIOTECAS#Museo Nacional de Ciencias Naturales (Biblioteca)");
-		// projectsCollectionsMap.put("0014_FMTN", "BIBLIOTECAS#Centro de Ciencias Humanas y Sociales (Biblioteca Tomás Navarro Tomás)");
+		 projectsCollectionsMap.put("0014_FMTN", "BIBLIOTECAS#Centro de Ciencias Humanas y Sociales (Biblioteca Tomás Navarro Tomás)");
 		// projectsCollectionsMap.put("0015_FAG", "BIBLIOTECAS#Centro de Estudios árabes GR-EEA");
 		// projectsCollectionsMap.put("0016_FAAD", "BIBLIOTECAS#Estación Experimental Aula Dei (Biblioteca) ");
 		// projectsCollectionsMap.put("0017_FACN", "BIBLIOTECAS#Museo Nacional de Ciencias Naturales (Biblioteca)");
@@ -404,7 +404,7 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 			}
 
 			Record record = new Record();
-			if (idSuffix != null && !idSuffix.isEmpty()) {
+			if (idMap.get(idNumber) != null && idSuffix != null && !idSuffix.isEmpty() && idSuffix.startsWith("V") && !idSuffix.contentEquals("V00")) {
 				record.setId(idString + "_" + idSuffix);
 			} else {
 				record.setId(idString);
@@ -757,6 +757,11 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 				if (idMap.get(volumeInfos[0]) != null && idMap.get(volumeInfos[0]) == true) {
 					// This volume is part of a Series/Multivolume work
 					if (dsAnchorType == null) {
+						if(volumeInfos.length > 2) {
+							//This one has a volume number, making it a MultiVolume
+							dsAnchorType = "MultiVolumeWork";
+							dsType = "Volume";
+						}
 						dsAnchorType = anchorMap.get(dsType);
 					}
 				}
@@ -1280,11 +1285,34 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 	 */
 	private File searchForExistingData(Record r) {
 		String processTitle = r.getId();
+		
+		//For imports with wrong processTitle, correct it
+		processTitle = processTitle.replace("000471130", "001100392");
+		processTitle = processTitle.replace("001363255", "000884278");
+		processTitle = processTitle.replace("00045898", "000045898");
+		processTitle = processTitle.replace("0000045898", "000045898");
+		//
+		
+		int index = processTitle.indexOf("_");
+		String processId = processTitle;
+		String processIdSuffix = "";
+		String processIdVolume = "";
+		if(index > 0 && index < processTitle.length()) {			
+			processId = processTitle.substring(0, index);
+			processIdSuffix = processTitle.substring(index+1);
+			int vIndex = processIdSuffix.indexOf("V");
+			if(vIndex > -1 && vIndex < processIdSuffix.length() - 2) {
+				processIdVolume = processIdSuffix.substring(vIndex);
+				if(processIdVolume.contains("_")) {
+					processIdVolume = processIdVolume.substring(0, processIdVolume.indexOf("_"));
+				}
+			}
+		}
 		String metsFilePath, processDataDirectory;
 		ProzessDAO dao = new ProzessDAO();
 
 		try {
-			List<Prozess> processList = dao.search("from Prozess where titel LIKE '%" + processTitle + "'");
+			List<Prozess> processList = dao.search("from Prozess where titel LIKE '%" + processId + "%'");
 
 			if (processList == null || processList.isEmpty()) {
 				String id = processTitle.split("_")[0] + "_V00";
@@ -1293,8 +1321,21 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 
 			if (processList != null && !processList.isEmpty()) {
 				Prozess p = processList.get(0);
-				r.setId(p.getTitel());
-				// p.setTitel(p.getTitel().split("_")[0] + "_" + processTitle);
+				if(processList.size() > 1) {
+				for(Prozess process : processList) {
+					if(process.getTitel().contains(processIdSuffix)) {
+						p = process;
+						break;
+					} else if (p.getTitel().contains(processIdVolume)) {
+							p = process;
+						}
+					}
+					
+				}
+				
+				
+				 p.setTitel(p.getTitel().split("_")[0] + "_" + processTitle);
+				 r.setId(p.getTitel());
 				logger.info("Found existing process '" + p.getTitel() + "'...");
 				metsFilePath = p.getMetadataFilePath();
 				processDataDirectory = p.getProcessDataDirectory();
@@ -1368,6 +1409,18 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 					topStruct.setType(prefs.getDocStrctTypeByName("SingleManuscript"));
 					ff.getDigitalDocument().setLogicalDocStruct(topStruct);
 					verifyDocStructIntegrity(topStruct);
+				}
+			}
+			//correct titles
+			if(anchorIdentifier != null && ff.getDigitalDocument().getLogicalDocStruct().getType().getName().contentEquals("MultiVolumeWork")) {
+				//we have a multivolume. Rename to anchor title to the child title and add the idSuffix to the child title
+				Metadata anchorTitle = ff.getDigitalDocument().getLogicalDocStruct().getAllMetadataByType(prefs.getMetadataTypeByName("TitleDocMain")).get(0);
+				Metadata volumeTitle = topStruct.getAllMetadataByType(prefs.getMetadataTypeByName("TitleDocMain")).get(0);
+				if(anchorTitle.getValue().replace("CSIC", "").replaceAll("\\d", "").isEmpty()) {
+					anchorTitle.setValue(volumeTitle.getValue());
+					if(identifierSuffix != null && !identifierSuffix.isEmpty()) {						
+						volumeTitle.setValue(volumeTitle.getValue() + " (" + identifierSuffix + ")");
+					}
 				}
 			}
 		} catch (PreferencesException e) {
