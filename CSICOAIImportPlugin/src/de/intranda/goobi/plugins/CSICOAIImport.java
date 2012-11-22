@@ -75,7 +75,7 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 	private static final Logger logger = Logger.getLogger(CSICOAIImport.class);
 
 	private static final String NAME = "CSICOAIImport";
-	private static final String VERSION = "1.0.20121114";
+	private static final String VERSION = "1.0.20121122";
 	private static final String XSLT_PATH = ConfigMain.getParameter("xsltFolder") + "MARC21slim2MODS3.xsl";
 	// private static final String XSLT_PATH = "resources/" + "MARC21slim2MODS3.xsl";
 	// private static final String MODS_MAPPING_FILE = "resources/" + "mods_map.xml";
@@ -94,6 +94,7 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 	private final boolean deleteTempFiles = ConfigPlugins.getPluginConfig(this).getBoolean("deleteTempFiles", false);
 	private final boolean copyImages = ConfigPlugins.getPluginConfig(this).getBoolean("copyImages", true);
 	private final boolean updateExistingRecords = ConfigPlugins.getPluginConfig(this).getBoolean("updateExistingRecords", true);
+	private final boolean logConversionLoss = ConfigPlugins.getPluginConfig(this).getBoolean("logConversionLoss", false);
 
 	private String data;
 
@@ -203,7 +204,7 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 				currentCollectionList.add(collection);
 			}
 			Fileformat ff = convertData();
-			correctId(ff);
+//			correctId(ff);
 			addPages(ff, imageDir);
 			ImportObject io = new ImportObject();
 
@@ -465,7 +466,7 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 		}
 		Fileformat ff = convertData();
 		addProject(ff, projectDir.getName());
-		correctId(ff);
+//		correctId(ff);
 
 		File[] imageList = imageDir.listFiles(CommonUtils.ImageFilter);
 		if (imageList == null || imageList.length == 0) {
@@ -684,18 +685,35 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 					eleMods = eleMods.getChild("mods", null);
 				}
 
+				//get volume infos
+				String[] volumeInfos = parseFolderName(currentImageFolder.getName());
+				int volumeNo = 0;
+				try {
+					volumeNo = Integer.valueOf(volumeInfos[2]);
+				} catch(NumberFormatException e) {
+					volumeNo = 0;
+				}
+				
 				// Determine the root docstruct type
 				String dsType = null;
 				String dsAnchorType = null;
+				boolean belongsToPeriodical = false;
+				boolean belongsToSeries = false;
+				boolean isManuscript = false;
+				boolean belongsToMultiVolume = false;
 
 				// handle TypeOfResource
 				List<Element> eleTypeOfResourceList = eleMods.getChildren("typeOfResource", null);
 				if (eleTypeOfResourceList != null) {
 					for (Element eleTypeOfResource : eleTypeOfResourceList) {
+						String resourceLabel = eleTypeOfResource.getAttributeValue("displayLabel");
+						if (resourceLabel != null && resourceLabel.contentEquals("SE")) {
+							belongsToPeriodical = true;
+						}
 						if ("yes".equals(eleTypeOfResource.getAttributeValue("manuscript"))) {
-							// Manuscript
-							dsType = "SingleManuscript";
-						} else if (marcStructTypeMap.get("?" + eleTypeOfResource.getTextTrim()) != null) {
+							isManuscript = true;
+						}
+						if (marcStructTypeMap.get("?" + eleTypeOfResource.getTextTrim()) != null) {
 							dsType = marcStructTypeMap.get("?" + eleTypeOfResource.getTextTrim());
 						} else {
 							dsType = "Monograph";
@@ -703,24 +721,18 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 					}
 				}
 
-				// handle issuance/frequency
-				List<Element> eleOriginInfoList = eleMods.getChildren("originInfo", null);
-				if (eleOriginInfoList != null) {
-					for (Element eleOriginInfo : eleOriginInfoList) {
-						Element eleIssuance = eleOriginInfo.getChild("issuance", null);
-						if (eleIssuance != null && marcStructTypeMap.get("?" + eleIssuance.getTextTrim()) != null) {
-							if (!dsType.contains("Manuscript") && marcStructTypeMap.get("?" + eleIssuance.getTextTrim()) != null) {
-								dsType = marcStructTypeMap.get("?" + eleIssuance.getTextTrim());
+				// handle physicalDescription
+				List<Element> physicalDescriptionList = eleMods.getChildren("physicalDescription", null);
+				if (physicalDescriptionList != null) {
+					for (Element physDescr : physicalDescriptionList) {
+						List<Element> eleFormList = physDescr.getChildren("form", null);
+						if (eleFormList != null) {
+							for (Element eleForm : eleFormList) {
+								if (eleForm.getAttribute("authority") != null && eleForm.getValue().contentEquals("Manuscrito")) {
+									isManuscript = true;
+								}
 							}
 						}
-						// Element eleFrequency = eleOriginInfo.getChild("frequency", null);
-						// if (eleFrequency != null && eleFrequency.getValue() != null && !eleFrequency.getValue().isEmpty()) {
-						// // it has a frequency, therefore gets an anchor
-						// dsAnchorType = anchorMap.get(dsType);
-						// if (dsAnchorType == null) {
-						// dsAnchorType = "Series";
-						// }
-						// }
 					}
 				}
 
@@ -731,39 +743,37 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 
 						if (eleRelatedSeries != null && eleRelatedSeries.getAttribute("type") != null
 								&& eleRelatedSeries.getAttribute("type").getValue().contentEquals("series")) {
-							if (dsAnchorType == null) {
-								dsAnchorType = "Series";
-							}
+							belongsToSeries = true;
 						}
 					}
 				}
 
-				// if we still don't have an anchorType, but dsType requires one, create an appropriate one
-				if (dsAnchorType == null) {
-					if (dsType.contentEquals("PeriodicalVolume")) {
-						dsAnchorType = "Periodical";
-					} else if (dsType.contentEquals("Volume")) {
-						dsAnchorType = "MultiVolumeWork";
+				if (volumeNo > 0 || (idMap.get(currentIdentifier.replaceAll("\\D", "")) != null && idMap.get(currentIdentifier.replaceAll("\\D", "")) == true)) {
+					// This volume is part of a Series/Multivolume work
+					if (!belongsToPeriodical) {
+						belongsToMultiVolume = true;
 					}
-				} else { // There is an anchor
-					if (dsType.contentEquals("SingleManuscript")) {
+				}
+
+				if (belongsToMultiVolume) {
+					dsAnchorType = "MultiVolumeWork";
+					if (isManuscript) {
 						dsType = "Manuscript";
-					} else if (dsType.contentEquals("Monograph")) {
+					} else {
+						dsType = "Volume";
+					}
+				} else if (belongsToPeriodical) {
+					dsAnchorType = "Periodical";
+					dsType = "PeriodicalVolume";
+				} else if (belongsToSeries) {
+					dsAnchorType = "Series";
+					if (isManuscript) {
+						dsType = "Manuscript";
+					} else {
 						dsType = "SerialVolume";
 					}
-				}
-
-				String[] volumeInfos = parseFolderName(currentImageFolder.getName());
-				if (idMap.get(volumeInfos[0]) != null && idMap.get(volumeInfos[0]) == true) {
-					// This volume is part of a Series/Multivolume work
-					if (dsAnchorType == null) {
-						if(volumeInfos.length > 2) {
-							//This one has a volume number, making it a MultiVolume
-							dsAnchorType = "MultiVolumeWork";
-							dsType = "Volume";
-						}
-						dsAnchorType = anchorMap.get(dsType);
-					}
+				} else if (isManuscript) {
+					dsType = "SingleManuscript";
 				}
 
 				logger.debug("Docstruct type: " + dsType);
@@ -778,12 +788,20 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 					if (dsAnchor == null) {
 						logger.error("Could not create DocStructType " + dsAnchorType);
 					}
+					try {
+						dsAnchor.addChild(dsVolume);
+					} catch (TypeNotAllowedAsChildException e) {
+						logger.error("Could not atach " + dsAnchorType + " to anchor " + dsType);
+					}
+					dd.setLogicalDocStruct(dsAnchor);
+				} else {
+					dd.setLogicalDocStruct(dsVolume);
 				}
 
 				DocStruct dsBoundBook = dd.createDocStruct(prefs.getDocStrctTypeByName("BoundBook"));
 				dd.setPhysicalDocStruct(dsBoundBook);
 				// Collect MODS metadata
-				ModsUtils.parseModsSection(MODS_MAPPING_FILE, prefs, dsVolume, dsBoundBook, dsAnchor, eleMods, volumeInfos[1]);
+				ModsUtils.parseModsSection(MODS_MAPPING_FILE, prefs, dsVolume, dsAnchor, dsBoundBook, eleMods, volumeNo, volumeInfos[1], identifierSuffix);
 				// currentIdentifier = ModsUtils.getIdentifier(prefs, dsVolume);
 				currentTitle = ModsUtils.getTitle(prefs, dsVolume);
 				currentAuthor = ModsUtils.getAuthor(prefs, dsVolume);
@@ -1269,8 +1287,10 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 
 		if (values[2] != null && !values[2].isEmpty() && !values[2].contentEquals("00")) {
 			identifierSuffix = "V" + values[2];
-		} else {
+		} else if(idMap.get(currentIdentifier.replaceAll("\\D", "")) != null && idMap.get(currentIdentifier.replaceAll("\\D", "")) == true){
 			identifierSuffix = values[1];
+		} else {
+			identifierSuffix = null;
 		}
 
 		return values;
