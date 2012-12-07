@@ -1,7 +1,6 @@
 package de.intranda.goobi.plugins;
 
 import java.io.BufferedInputStream;
-import java.io.BufferedReader;
 import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.FileFilter;
@@ -17,10 +16,9 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 import net.xeoh.plugins.base.annotations.PluginImplementation;
 
@@ -36,12 +34,12 @@ import org.goobi.production.enums.PluginType;
 import org.goobi.production.plugin.interfaces.IImportPlugin;
 import org.goobi.production.plugin.interfaces.IPlugin;
 import org.goobi.production.properties.ImportProperty;
+import org.jdom.Content;
 import org.jdom.Document;
 import org.jdom.Element;
 import org.jdom.JDOMException;
 import org.jdom.Namespace;
 import org.jdom.input.SAXBuilder;
-import org.jdom.output.XMLOutputter;
 import org.jdom.transform.XSLTransformer;
 
 import ugh.dl.DigitalDocument;
@@ -75,7 +73,7 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 	private static final Logger logger = Logger.getLogger(CSICOAIImport.class);
 
 	private static final String NAME = "CSICOAIImport";
-	private static final String VERSION = "1.0.20121122";
+	private static final String VERSION = "1.0.20121207";
 	private static final String XSLT_PATH = ConfigMain.getParameter("xsltFolder") + "MARC21slim2MODS3.xsl";
 	// private static final String XSLT_PATH = "resources/" + "MARC21slim2MODS3.xsl";
 	// private static final String MODS_MAPPING_FILE = "resources/" + "mods_map.xml";
@@ -102,9 +100,6 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 	private File importFolder = null; // goobi temp folder
 
 	private Map<String, String> marcStructTypeMap = new HashMap<String, String>();
-	private Map<String, String> anchorMap = new HashMap<String, String>();
-	private Map<String, String> topStructMap = new HashMap<String, String>();
-	private Map<String, String> logicalStructTypeMap = new HashMap<String, String>();
 	private Map<String, String> projectsCollectionsMap = new HashMap<String, String>();
 	private Map<String, File> recordImageMap = new HashMap<String, File>();
 	private HashMap<String, Boolean> idMap = new HashMap<String, Boolean>(); // maps to true all records with reoccuring ids (PPNs)
@@ -141,26 +136,8 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 		marcStructTypeMap.put("?software, multimedia", null);
 		marcStructTypeMap.put("?mixed material", null);
 
-		anchorMap.put("Monograph", "Series");
-		anchorMap.put("Manuscript", "Series");
-		anchorMap.put("SingleManuscript", "Series");
-		anchorMap.put("SerialVolume", "Series");
-		anchorMap.put("Volume", "MultiVolumeWork");
-		anchorMap.put("PeriodicalVolume", "Periodical");
-
-		logicalStructTypeMap.put("MANUSCRIPT", "Manuscript");
-		logicalStructTypeMap.put("DOCUMENT", "MultiVolumeWork");
-		logicalStructTypeMap.put("ITEM", "Volume");
-		logicalStructTypeMap.put("MONOGRAPH", "Monograph");
-		logicalStructTypeMap.put("JOURNAL", "Perodical");
-		logicalStructTypeMap.put("VOLUME", "PeriodicalVolume");
-
-		topStructMap.put("MultiVolumeWork", "Volume");
-		topStructMap.put("Periodical", "PeriodicalVolume");
-		topStructMap.put("Series", "SerialVolume");
-
 		projectsCollectionsMap.put("0001_POQ", "BIBLIOTECAS#Museo Nacional de Ciencias Naturales (Biblioteca)");
-		projectsCollectionsMap.put("0004_PBM", "BIBLIOTECAS#Instituto de Cientias Matemáticas (Biblioteca Jorqe Juan)");
+		projectsCollectionsMap.put("0004_PBM", "BIBLIOTECAS#Instituto de Ciencias Matemáticas (Biblioteca Jorqe Juan)");
 		projectsCollectionsMap.put("0005_BETN", "BIBLIOTECAS#Centro de Ciencias Humanas y Sociales (Biblioteca Tomás Navarro Tomás)");
 		// projectsCollectionsMap.put("0006_PMSC", "BIBLIOTECAS#Centro de Ciencias Humanas y Sociales (Biblioteca Tomás Navarro Tomás)");
 		// projectsCollectionsMap.put("0006_PMSC_G_EEA", "BIBLIOTECAS#Centro de Estudios árabes GR-EEA");
@@ -170,7 +147,7 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 		projectsCollectionsMap.put("0010_CMTN", "BIBLIOTECAS#Centro de Ciencias Humanas y Sociales (Biblioteca Tomás Navarro Tomás)");
 		projectsCollectionsMap.put("0012_CIP", "BIBLIOTECAS#Museo Nacional de Ciencias Naturales (Biblioteca)");
 		projectsCollectionsMap.put("0013_JAE", "BIBLIOTECAS#Museo Nacional de Ciencias Naturales (Biblioteca)");
-		 projectsCollectionsMap.put("0014_FMTN", "BIBLIOTECAS#Centro de Ciencias Humanas y Sociales (Biblioteca Tomás Navarro Tomás)");
+		projectsCollectionsMap.put("0014_FMTN", "BIBLIOTECAS#Centro de Ciencias Humanas y Sociales (Biblioteca Tomás Navarro Tomás)");
 		// projectsCollectionsMap.put("0015_FAG", "BIBLIOTECAS#Centro de Estudios árabes GR-EEA");
 		// projectsCollectionsMap.put("0016_FAAD", "BIBLIOTECAS#Estación Experimental Aula Dei (Biblioteca) ");
 		// projectsCollectionsMap.put("0017_FACN", "BIBLIOTECAS#Museo Nacional de Ciencias Naturales (Biblioteca)");
@@ -204,7 +181,6 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 				currentCollectionList.add(collection);
 			}
 			Fileformat ff = convertData();
-//			correctId(ff);
 			addPages(ff, imageDir);
 			ImportObject io = new ImportObject();
 
@@ -380,10 +356,6 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 			} else if (volumeNo != null) {
 				idSuffix = volumeNo;
 			}
-			// if (!parts[last].contentEquals(idString) || parts[last].contentEquals("V00")) {
-			// // We have a volume number or pieceDesignation
-			// idSuffix = parts[last];
-			// }
 
 			if (idString == null) {
 				continue;
@@ -466,7 +438,6 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 		}
 		Fileformat ff = convertData();
 		addProject(ff, projectDir.getName());
-//		correctId(ff);
 
 		File[] imageList = imageDir.listFiles(CommonUtils.ImageFilter);
 		if (imageList == null || imageList.length == 0) {
@@ -515,28 +486,6 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 					File metadataDir = oldMetaFile.getParentFile();
 
 					CommonUtils.moveDir(tempDir, metadataDir, true);
-
-					// File[] files = tempDir.listFiles();
-					// if (files != null) {
-					// for (File file : files) {
-					// File newFile = new File(metadataDir, file.getName());
-					// if (file.isDirectory()) {
-					// if(newFile.isDirectory()) {
-					// CommonUtils.m
-					// }
-					// // org.apache.commons.io.FileUtils.copyDirectory(file, newFile);
-					// } else if (file.isFile()) {
-					// int counter = 0;
-					// while (newFile.isFile()) {
-					// String fileNameTrunk = newFile.getName().substring(0, newFile.getName().indexOf("."));
-					// String fileNameExt = newFile.getName().substring(newFile.getName().indexOf("."));
-					// newFile = new File(newFile.getParent(), fileNameTrunk + counter + fileNameExt);
-					// counter++;
-					// }
-					// org.apache.commons.io.FileUtils.copyDirectory(file, newFile);
-					// }
-					// }
-					// }
 				}
 
 				// purging old temp files
@@ -685,15 +634,15 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 					eleMods = eleMods.getChild("mods", null);
 				}
 
-				//get volume infos
+				// get volume infos
 				String[] volumeInfos = parseFolderName(currentImageFolder.getName());
 				int volumeNo = 0;
 				try {
 					volumeNo = Integer.valueOf(volumeInfos[2]);
-				} catch(NumberFormatException e) {
+				} catch (NumberFormatException e) {
 					volumeNo = 0;
 				}
-				
+
 				// Determine the root docstruct type
 				String dsType = null;
 				String dsAnchorType = null;
@@ -748,21 +697,14 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 					}
 				}
 
-				if (volumeNo > 0 || (idMap.get(currentIdentifier.replaceAll("\\D", "")) != null && idMap.get(currentIdentifier.replaceAll("\\D", "")) == true)) {
+				if (idMap.get(currentIdentifier.replaceAll("\\D", "")) != null && (idMap.get(currentIdentifier.replaceAll("\\D", "")) == true || (identifierSuffix != null && identifierSuffix.startsWith("V")))) {
 					// This volume is part of a Series/Multivolume work
-					if (!belongsToPeriodical) {
+//					if (!belongsToPeriodical && !belongsToSeries) {
 						belongsToMultiVolume = true;
-					}
+//					}
 				}
 
-				if (belongsToMultiVolume) {
-					dsAnchorType = "MultiVolumeWork";
-					if (isManuscript) {
-						dsType = "Manuscript";
-					} else {
-						dsType = "Volume";
-					}
-				} else if (belongsToPeriodical) {
+				if (belongsToPeriodical) {
 					dsAnchorType = "Periodical";
 					dsType = "PeriodicalVolume";
 				} else if (belongsToSeries) {
@@ -774,6 +716,17 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 					}
 				} else if (isManuscript) {
 					dsType = "SingleManuscript";
+				}
+				//Multivolume may be part of a Series or Periodical. In that case, attach teh volumes to the Series/Periodical
+				if (belongsToMultiVolume) {
+					if(!belongsToPeriodical && !belongsToSeries) {						
+						dsAnchorType = "MultiVolumeWork";
+					}
+					if (isManuscript) {
+						dsType = "Manuscript";
+					} else {
+						dsType = "Volume";
+					}
 				}
 
 				logger.debug("Docstruct type: " + dsType);
@@ -801,7 +754,8 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 				DocStruct dsBoundBook = dd.createDocStruct(prefs.getDocStrctTypeByName("BoundBook"));
 				dd.setPhysicalDocStruct(dsBoundBook);
 				// Collect MODS metadata
-				ModsUtils.parseModsSection(MODS_MAPPING_FILE, prefs, dsVolume, dsAnchor, dsBoundBook, eleMods, volumeNo, volumeInfos[1], identifierSuffix);
+				ModsUtils.parseModsSection(MODS_MAPPING_FILE, prefs, dsVolume, dsAnchor, dsBoundBook, eleMods, volumeNo, volumeInfos[1],
+						identifierSuffix);
 				// currentIdentifier = ModsUtils.getIdentifier(prefs, dsVolume);
 				currentTitle = ModsUtils.getTitle(prefs, dsVolume);
 				currentAuthor = ModsUtils.getAuthor(prefs, dsVolume);
@@ -848,6 +802,15 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 					}
 				} catch (TypeNotAllowedAsChildException e) {
 					logger.error("Child Type not allowed", e);
+				}
+				
+				
+				// log conversion-errors from marc to mods
+				if (logConversionLoss) {
+					File tempMods = new File("/opt/digiverso/logs/CSIC", "tempMods.xml");
+					Document lossDoc = getMarcModsLoss(doc, dd.toString());
+					File lossFile = new File("/opt/digiverso/logs/CSIC", currentIdentifier + identifierSuffix + "_MarcLoss.xml");
+					CommonUtils.getFileFromDocument(lossFile, lossDoc);
 				}
 
 				if (!deleteTempFiles) {
@@ -1014,18 +977,6 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 
 	@Override
 	public void deleteFiles(List<String> selectedFilenames) {
-		// String id = getProcessTitle();
-		// if(id != null) {
-		// id = id.replace(".xml", "");
-		// if(importFolder.isDirectory() && importFolder.listFiles() != null) {
-		// for (File file : importFolder.listFiles()) {
-		// if(file.getName().contains(id)) {
-		// CommonUtils.deleteAllFiles(file);
-		// }
-		// }
-		// }
-		//
-		// }
 	}
 
 	@Override
@@ -1151,65 +1102,6 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 	}
 
 	/**
-	 * 
-	 * @param text
-	 * @return
-	 * @throws IOException
-	 */
-	private String convertTextToMarcXml(String text) throws IOException {
-		if (StringUtils.isNotEmpty(text)) {
-			Document doc = new Document();
-			text = text.replace((char) 0x1E, ' ');
-			BufferedReader reader = new BufferedReader(new StringReader(text));
-			Element eleRoot = new Element("collection");
-			doc.setRootElement(eleRoot);
-			Element eleRecord = new Element("record");
-			eleRoot.addContent(eleRecord);
-			String str;
-			while ((str = reader.readLine()) != null) {
-				if (str.toUpperCase().startsWith("=LDR")) {
-					// Leader
-					Element eleLeader = new Element("leader");
-					eleLeader.setText(str.substring(7));
-					eleRecord.addContent(eleLeader);
-				} else if (str.length() > 2) {
-					String tag = str.substring(1, 4);
-					if (tag.startsWith("00") && str.length() > 6) {
-						// Control field
-						str = str.substring(6);
-						Element eleControlField = new Element("controlfield");
-						eleControlField.setAttribute("tag", tag);
-						eleControlField.addContent(str);
-						eleRecord.addContent(eleControlField);
-					} else if (str.length() > 6) {
-						// Data field
-						String ind1 = str.substring(6, 7);
-						String ind2 = str.substring(7, 8);
-						str = str.substring(8);
-						Element eleDataField = new Element("datafield");
-						eleDataField.setAttribute("tag", tag);
-						eleDataField.setAttribute("ind1", !ind1.equals("\\") ? ind1 : "");
-						eleDataField.setAttribute("ind2", !ind2.equals("\\") ? ind2 : "");
-						Pattern p = Pattern.compile("[$]+[^$]+");
-						Matcher m = p.matcher(str);
-						while (m.find()) {
-							String sub = str.substring(m.start(), m.end());
-							Element eleSubField = new Element("subfield");
-							eleSubField.setAttribute("code", sub.substring(1, 2));
-							eleSubField.addContent(sub.substring(2));
-							eleDataField.addContent(eleSubField);
-						}
-						eleRecord.addContent(eleDataField);
-					}
-				}
-			}
-			return new XMLOutputter().outputString(doc);
-		}
-
-		return null;
-	}
-
-	/**
 	 * Sets the namespace of all Elements within Element root to Namespace ns
 	 * 
 	 * @param root
@@ -1264,6 +1156,7 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 
 		String[] parts = name.split("_");
 		values[0] = parts[0];
+		currentIdentifier = values[0];
 		int last = parts.length - 1;
 		if (parts.length > 2) {
 
@@ -1285,10 +1178,12 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 			values[1] = parts[last];
 		}
 
-		if (values[2] != null && !values[2].isEmpty() && !values[2].contentEquals("00")) {
-			identifierSuffix = "V" + values[2];
-		} else if(idMap.get(currentIdentifier.replaceAll("\\D", "")) != null && idMap.get(currentIdentifier.replaceAll("\\D", "")) == true){
-			identifierSuffix = values[1];
+		if (idMap.get(currentIdentifier.replaceAll("\\D", "")) != null) {
+			if (values[2] != null && !values[2].isEmpty() && !values[2].contentEquals("00")) {
+				identifierSuffix = "V" + values[2];
+			} else if(idMap.get(currentIdentifier.replaceAll("\\D", "")) == true) {
+				identifierSuffix = values[1];
+			}
 		} else {
 			identifierSuffix = null;
 		}
@@ -1305,25 +1200,25 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 	 */
 	private File searchForExistingData(Record r) {
 		String processTitle = r.getId();
-		
-		//For imports with wrong processTitle, correct it
+
+		// For imports with wrong processTitle, correct it
 		processTitle = processTitle.replace("000471130", "001100392");
 		processTitle = processTitle.replace("001363255", "000884278");
 		processTitle = processTitle.replace("00045898", "000045898");
 		processTitle = processTitle.replace("0000045898", "000045898");
 		//
-		
+
 		int index = processTitle.indexOf("_");
 		String processId = processTitle;
 		String processIdSuffix = "";
 		String processIdVolume = "";
-		if(index > 0 && index < processTitle.length()) {			
+		if (index > 0 && index < processTitle.length()) {
 			processId = processTitle.substring(0, index);
-			processIdSuffix = processTitle.substring(index+1);
+			processIdSuffix = processTitle.substring(index + 1);
 			int vIndex = processIdSuffix.indexOf("V");
-			if(vIndex > -1 && vIndex < processIdSuffix.length() - 2) {
+			if (vIndex > -1 && vIndex < processIdSuffix.length() - 2) {
 				processIdVolume = processIdSuffix.substring(vIndex);
-				if(processIdVolume.contains("_")) {
+				if (processIdVolume.contains("_")) {
 					processIdVolume = processIdVolume.substring(0, processIdVolume.indexOf("_"));
 				}
 			}
@@ -1341,21 +1236,20 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 
 			if (processList != null && !processList.isEmpty()) {
 				Prozess p = processList.get(0);
-				if(processList.size() > 1) {
-				for(Prozess process : processList) {
-					if(process.getTitel().contains(processIdSuffix)) {
-						p = process;
-						break;
-					} else if (p.getTitel().contains(processIdVolume)) {
+				if (processList.size() > 1) {
+					for (Prozess process : processList) {
+						if (process.getTitel().contains(processIdSuffix)) {
+							p = process;
+							break;
+						} else if (p.getTitel().contains(processIdVolume)) {
 							p = process;
 						}
 					}
-					
+
 				}
-				
-				
-				 p.setTitel(p.getTitel().split("_")[0] + "_" + processTitle);
-				 r.setId(p.getTitel());
+
+				p.setTitel(p.getTitel().split("_")[0] + "_" + processTitle);
+				r.setId(p.getTitel());
 				logger.info("Found existing process '" + p.getTitel() + "'...");
 				metsFilePath = p.getMetadataFilePath();
 				processDataDirectory = p.getProcessDataDirectory();
@@ -1388,118 +1282,58 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 		return getDescription();
 	}
 
-	public void correctId(Fileformat ff) {
-
-		try {
-			DocStruct topStruct = ff.getDigitalDocument().getLogicalDocStruct();
-			String anchorIdentifier = null;
-			String anchorName = null;
-			String logIdentifier = topStruct.getAllMetadataByType(prefs.getMetadataTypeByName("CatalogIDDigital")).get(0).getValue();
-			if (topStruct.getType().isAnchor()) {
-				anchorIdentifier = logIdentifier;
-				topStruct = ff.getDigitalDocument().getLogicalDocStruct().getAllChildren().get(0);
-				logIdentifier = topStruct.getAllMetadataByType(prefs.getMetadataTypeByName("CatalogIDDigital")).get(0).getValue();
-				anchorName = ff.getDigitalDocument().getLogicalDocStruct().getAllMetadataByType(prefs.getMetadataTypeByName("TitleDocMain")).get(0)
-						.getValue();
-			}
-			if ((anchorIdentifier != null && anchorIdentifier.contentEquals(logIdentifier)) || idMap.get(logIdentifier.replaceAll("\\D", "")) != null
-					&& idMap.get(logIdentifier.replaceAll("\\D", "")) == true) {
-				// id already exists: add volume or pieceDesignation to it
-				String newId = logIdentifier + "_" + identifierSuffix;
-				newId = newId.replaceAll("__", "_");
-				topStruct.getAllMetadataByType(prefs.getMetadataTypeByName("CatalogIDDigital")).get(0).setValue(newId);
-				if (anchorIdentifier != null && anchorIdentifier.startsWith("CSIC13")) {
-					ff.getDigitalDocument().getLogicalDocStruct().getAllMetadataByType(prefs.getMetadataTypeByName("CatalogIDDigital")).get(0)
-							.setValue(logIdentifier);
-				}
-				// String anchorName =
-				// ff.getDigitalDocument().getLogicalDocStruct().getAllMetadataByType(prefs.getMetadataTypeByName("TitleDocMain")).get(0).getValue();
-				if (anchorName != null && anchorName.startsWith("CSIC13")) {
-					ff.getDigitalDocument().getLogicalDocStruct().getAllMetadataByType(prefs.getMetadataTypeByName("TitleDocMain")).get(0)
-							.setValue(logIdentifier);
-				}
-			} else if (anchorName != null && anchorName.startsWith("CSIC13")) {
-				// irrelevant anchor. remove if the topStruct can exist on its own
-				if (topStruct.getType().getName().contentEquals("SerialVolume")) {
-					topStruct.setType(prefs.getDocStrctTypeByName("Monograph"));
-					ff.getDigitalDocument().setLogicalDocStruct(topStruct);
-					verifyDocStructIntegrity(topStruct);
-				}
-				if (topStruct.getType().getName().contentEquals("Manuscript")) {
-					topStruct.setType(prefs.getDocStrctTypeByName("SingleManuscript"));
-					ff.getDigitalDocument().setLogicalDocStruct(topStruct);
-					verifyDocStructIntegrity(topStruct);
-				}
-			}
-			//correct titles
-			if(anchorIdentifier != null && ff.getDigitalDocument().getLogicalDocStruct().getType().getName().contentEquals("MultiVolumeWork")) {
-				//we have a multivolume. Rename to anchor title to the child title and add the idSuffix to the child title
-				Metadata anchorTitle = ff.getDigitalDocument().getLogicalDocStruct().getAllMetadataByType(prefs.getMetadataTypeByName("TitleDocMain")).get(0);
-				Metadata volumeTitle = topStruct.getAllMetadataByType(prefs.getMetadataTypeByName("TitleDocMain")).get(0);
-				if(anchorTitle.getValue().replace("CSIC", "").replaceAll("\\d", "").isEmpty()) {
-					anchorTitle.setValue(volumeTitle.getValue());
-					if(identifierSuffix != null && !identifierSuffix.isEmpty()) {						
-						volumeTitle.setValue(volumeTitle.getValue() + " (" + identifierSuffix + ")");
-					}
-				}
-			}
-		} catch (PreferencesException e) {
-			logger.error("Failed correcting PPN");
-		} catch (IndexOutOfBoundsException e) {
-			logger.error("Failed correcting PPN");
+	private Document getMarcModsLoss(Document marcDoc, String  modsString) {
+		modsString = modsString.replaceAll("\"", "");
+		ArrayList<String> trimStrings = new ArrayList<String>(Arrays.asList(new String[] { ".", ",", ":", ";", "(", ")", "[", "]", "{", "}" , "\\", "/", "\t", "\n"}));
+		Element record = marcDoc.getRootElement();
+		if (record == null) {
+			return null;
 		}
-	}
 
-	/**
-	 * Removes and childen and metadata not allowed for this docStructType
-	 * 
-	 * @param docStruct
-	 */
-	private void verifyDocStructIntegrity(DocStruct docStruct) {
-		if (docStruct.getAllChildren() != null) {
-			ArrayList<DocStruct> childrenToRemove = new ArrayList<DocStruct>();
-			for (DocStruct child : docStruct.getAllChildren()) {
-				if (!docStruct.isDocStructTypeAllowedAsChild(child.getType())) {
-					logger.warn("Removing child " + child.getType().getName() + " from DocStruct " + docStruct.getType().getName());
-					childrenToRemove.add(child);
-					// docStruct.removeChild(child);
-				}
-			}
-			for (DocStruct docStruct2 : childrenToRemove) {
-				docStruct.removeChild(docStruct2);
-			}
-		}
-		if (docStruct.getAllMetadata() != null) {
-			ArrayList<Metadata> metadataToRemove = new ArrayList<Metadata>();
-			HashMap<MetadataType, Boolean> existingMetadataMap = new HashMap<MetadataType, Boolean>();
-			for (Metadata metadata : docStruct.getAllMetadata()) {
-				MetadataType type = metadata.getType();
-				boolean isAllowed = false;
-				for (MetadataType mdType : docStruct.getType().getAllMetadataTypes()) {
-					if (mdType.getName().contentEquals(type.getName())) {
-						isAllowed = true;
-						if (docStruct.getType().getNumberOfMetadataType(mdType).contentEquals("1o") && existingMetadataMap.get(mdType) != null) {
-							// a metadata of this type already exists, although only one instance is permitted. Delete this instance
-							isAllowed = false;
-						} else {
-							existingMetadataMap.put(mdType, true);
+		Document missingElementsDoc = new Document(new Element("Lost-in-MarcMods-Conversion"));
+//		String modsString = CommonUtils.getStringFromDocument(modsDoc, "utf-8");
+		// modsString = modsString.replaceAll("\"", "");
+
+		Iterator<Content> descendant = record.getDescendants();
+		while (descendant.hasNext()) {
+			Element ele = null;
+			Object obj = descendant.next();
+			if (obj instanceof Element) {
+				ele = (Element) obj;
+				String marcContent = ele.getText();
+				if (marcContent != null && !marcContent.isEmpty()) {
+					try {
+						marcContent = marcContent.trim();
+						while (trimStrings.contains(marcContent.substring(0, 1)) && marcContent.length() > 1) {
+							marcContent = marcContent.substring(1);
+							marcContent = marcContent.trim();
 						}
-
+						while (trimStrings.contains(marcContent.substring(marcContent.length() - 1, marcContent.length())) && marcContent.length() > 1) {
+							marcContent = marcContent.substring(0, marcContent.length() - 1);
+							marcContent = marcContent.trim();
+						}
+						if (modsString.contains(marcContent.replaceAll("\"", ""))) {
+							// marc field is contained in the mods doc
+						} else {
+							Element parentElement = ele.getParentElement();
+							if (parentElement != null && parentElement != record) {
+								// The element has a parent that is not the root element, which we should log as well
+								Element parentClone = (Element) parentElement.clone();
+								parentClone.removeContent();
+								missingElementsDoc.getRootElement().addContent(parentClone);
+								parentClone.addContent((Element) ele.clone());
+							} else {
+								missingElementsDoc.getRootElement().addContent((Element) ele.clone());
+							}
+						}
+					} catch (IndexOutOfBoundsException e) {
+						continue;
 					}
-
 				}
 
-				if (!isAllowed) {
-					// if (!docStruct.getType().isMDTypeAllowed(type)) {
-					logger.warn("Removing metadata " + metadata.getType().getName() + " from DocStruct " + docStruct.getType().getName());
-					metadataToRemove.add(metadata);
-					// docStruct.removeMetadata(metadata);
-				}
-			}
-			for (Metadata metadata : metadataToRemove) {
-				docStruct.removeMetadata(metadata);
 			}
 		}
+		return missingElementsDoc;
 	}
 
 }

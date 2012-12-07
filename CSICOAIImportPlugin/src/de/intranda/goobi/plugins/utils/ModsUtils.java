@@ -38,6 +38,7 @@ import org.apache.commons.lang.StringUtils;
 import org.apache.log4j.Logger;
 import org.apache.poi.hdf.model.hdftypes.FileInformationBlock;
 import org.apache.poi.hssf.record.chart.SeriesIndexRecord;
+import org.jdom.Attribute;
 import org.jdom.Document;
 import org.jdom.Element;
 import org.jdom.JDOMException;
@@ -193,8 +194,8 @@ public class ModsUtils {
 		personRoleMap.put("corr", null);
 		personRoleMap.put("dibujante", "IllustratorArtist");
 		personRoleMap.put("dib", "IllustratorArtist");
-		personRoleMap.put("director", null);
-		personRoleMap.put("dir", null);
+		personRoleMap.put("director", "Director");
+		personRoleMap.put("dir", "Director");
 		personRoleMap.put("editor", "Editor");
 		personRoleMap.put("ed", "Editor");
 		personRoleMap.put("encuadernado", null);
@@ -415,8 +416,8 @@ public class ModsUtils {
 
 								// set metadata type to role
 								if (roleTerm != null && !roleTerm.isEmpty()) {
-									if(roleTerm.endsWith(".")) {
-										roleTerm = roleTerm.substring(0, roleTerm.length()-1);
+									if (roleTerm.endsWith(".")) {
+										roleTerm = roleTerm.substring(0, roleTerm.length() - 1);
 									}
 									typeName = personRoleMap.get(roleTerm.toLowerCase());
 									if (typeName == null) {
@@ -475,31 +476,41 @@ public class ModsUtils {
 						// logger.debug("XPath: " + query);
 						XPath xpath = XPath.newInstance(query);
 						xpath.addNamespace(NS_MODS);
-						List<Element> eleValueList = xpath.selectNodes(doc);
+						List eleValueList = xpath.selectNodes(doc);
 						if (eleValueList != null) {
-
 							if (mdName.contentEquals("Taxonomy")) {
-								for (Element eleValue : eleValueList) {
-									List<Element> subjectChildren = eleValue.getChildren();
-									String value = "";
-									for (Element element : subjectChildren) {
-										if (taxonomyFieldsList.contains(element.getName().toLowerCase())) {
-											value = value + separator + element.getValue();
+								for (Object objValue : eleValueList) {
+									if (objValue instanceof Element) {
+										Element eleValue = (Element) objValue;
+										List<Element> subjectChildren = eleValue.getChildren();
+										String value = "";
+										for (Element element : subjectChildren) {
+											if (taxonomyFieldsList.contains(element.getName().toLowerCase())) {
+												value = value + separator + element.getValue();
+											}
 										}
-									}
-									if (value.length() > separator.length()) {
-										value = value.substring(separator.length()).trim();
-										values.add(value);
+										if (value.length() > separator.length()) {
+											value = value.substring(separator.length()).trim();
+											values.add(value);
+										}
 									}
 								}
 							} else {
 								int count = 0;
-								for (Element eleValue : eleValueList) {
-									logger.debug("mdType: " + mdType.getName() + "; Value: " + eleValue.getTextTrim());
-									String value = eleValue.getTextTrim();
-									if (values.size() <= count) {
+								for (Object objValue : eleValueList) {
+									String value = null;
+									if (objValue instanceof Element) {
+										Element eleValue = (Element) objValue;
+										logger.debug("mdType: " + mdType.getName() + "; Value: " + eleValue.getTextTrim());
+										value = eleValue.getTextTrim();
+									} else if (objValue instanceof Attribute) {
+										Attribute atrValue = (Attribute) objValue;
+										logger.debug("mdType: " + mdType.getName() + "; Value: " + atrValue.getValue());
+										value = atrValue.getValue();
+									}
+									if (value != null && values.size() <= count) {
 										values.add(value);
-									} else {
+									} else if (value != null) {
 										value = values.get(count) + separator + value;
 										values.set(count, value);
 									}
@@ -543,22 +554,40 @@ public class ModsUtils {
 								if (eleMetadata.getAttribute("logical") != null && eleMetadata.getAttributeValue("logical").equalsIgnoreCase("true")) {
 									// logger.debug("Added metadata \"" + metadata.getValue() + "\" to logical structure");
 
-									if (mdName.contentEquals("TitleDocMain") && writeAllMetadataToAnchor) {
+									if (mdName.contentEquals("TitleDocMain")) {
 										if (suffix != null && !suffix.isEmpty()) {
 											metadata.setValue(value + " [" + suffix + "]");
 										}
-										dsLogical.addMetadata(metadata);
-										seriesTitle = value;
+										try {
+											dsLogical.addMetadata(metadata);
+											seriesTitle = value;
+										} catch (MetadataTypeNotAllowedException e) {
+											logger.warn(e.getMessage());
+										}
 									} else if (mdName.contentEquals("CatalogIDDigital")) {
 										if (suffix != null && !suffix.isEmpty()) {
 											metadata.setValue(value + "_" + suffix);
-											seriesID = value;
+											if (writeAllMetadataToAnchor) {
+												seriesID = value;
+											}
 										}
-										dsLogical.addMetadata(metadata);
+										try {
+											dsLogical.addMetadata(metadata);
+										} catch (MetadataTypeNotAllowedException e) {
+											logger.warn(e.getMessage());
+										}
 									} else {
-										dsLogical.addMetadata(metadata);
-										if (writeAllMetadataToAnchor) {
-											dsAnchor.addMetadata(metadata);
+										try {
+											dsLogical.addMetadata(metadata);
+										} catch (MetadataTypeNotAllowedException e) {
+											logger.warn(e.getMessage());
+										}
+										try {
+											if (writeAllMetadataToAnchor) {
+												dsAnchor.addMetadata(metadata);
+											}
+										} catch (MetadataTypeNotAllowedException e) {
+											logger.warn(e.getMessage());
 										}
 									}
 
@@ -601,8 +630,10 @@ public class ModsUtils {
 					List<Element> eleSubList = eleValue.getChildren();
 					if (eleSubList != null && !eleSubList.isEmpty()) {
 						for (Element element : eleSubList) {
-							if (element.getText() != null && !element.getText().isEmpty()) {
-								values.add(element.getTextTrim());
+							if (element.getName().contentEquals("title")) {
+								if (element.getText() != null && !element.getText().isEmpty()) {
+									values.add(element.getTextTrim());
+								}
 							}
 						}
 					}
@@ -664,7 +695,7 @@ public class ModsUtils {
 		if (dsAnchor != null && suffix != null && !suffix.isEmpty()) {
 
 			List<? extends Metadata> mdCurrentNoList = dsLogical.getAllMetadataByType(prefs.getMetadataTypeByName("CurrentNo"));
-			if (mdCurrentNoList == null || mdCurrentNoList.isEmpty()) {
+			if ((mdCurrentNoList == null || mdCurrentNoList.isEmpty()) && !writeAllMetadataToAnchor) {	//write CurrentNo only within Series or Periodical, MultiVolumeNo is written to title
 				// No current Number, so we create one
 				try {
 					Metadata md = new Metadata(prefs.getMetadataTypeByName("CurrentNo"));
