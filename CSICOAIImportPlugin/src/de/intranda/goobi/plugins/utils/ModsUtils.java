@@ -47,6 +47,7 @@ import org.jdom.input.SAXBuilder;
 import org.jdom.output.XMLOutputter;
 import org.jdom.xpath.XPath;
 
+import de.intranda.goobi.plugins.CSICOAIImport;
 import de.schlichtherle.io.FileInputStream;
 import de.sub.goobi.Import.ImportOpac;
 import de.sub.goobi.config.ConfigMain;
@@ -236,9 +237,12 @@ public class ModsUtils {
 	 * @throws JDOMException
 	 */
 	@SuppressWarnings("unchecked")
-	public static void parseModsSection(String mappingFileName, Prefs prefs, DocStruct dsLogical, DocStruct dsAnchor, DocStruct dsPhysical,
-			Element eleMods, int volumeNo, String pieceDesignation, String suffix) throws JDOMException, IOException {
+	public static void parseModsSection(CSICOAIImport plugin, DocStruct dsLogical, DocStruct dsAnchor, DocStruct dsPhysical, Element eleMods,
+			int volumeNo, String pieceDesignation) throws JDOMException, IOException {
 		fillPersonRoleMap();
+		String mappingFileName = CSICOAIImport.MODS_MAPPING_FILE;
+		Prefs prefs = plugin.getPrefs();
+		String suffix = plugin.getCurrentSuffix();
 		boolean writeAllMetadataToAnchor = false;
 		if (dsAnchor != null && dsAnchor.getType().getName().contentEquals("MultiVolumeWork")) {
 			writeAllMetadataToAnchor = true;
@@ -555,8 +559,12 @@ public class ModsUtils {
 									// logger.debug("Added metadata \"" + metadata.getValue() + "\" to logical structure");
 
 									if (mdName.contentEquals("TitleDocMain")) {
-										if (suffix != null && !suffix.isEmpty()) {
-											metadata.setValue(value + " [" + suffix + "]");
+										if (suffix != null && !suffix.isEmpty() && (plugin.addVolumeNoToTitle || !writeAllMetadataToAnchor)) {
+											if(plugin.useSquareBracketsForVolume) {												
+												metadata.setValue(value + " [" + suffix + "]");
+											} else {
+												metadata.setValue(value + " (" + suffix + ")");
+											}
 										}
 										try {
 											dsLogical.addMetadata(metadata);
@@ -695,34 +703,38 @@ public class ModsUtils {
 		if (dsAnchor != null && suffix != null && !suffix.isEmpty()) {
 
 			List<? extends Metadata> mdCurrentNoList = dsLogical.getAllMetadataByType(prefs.getMetadataTypeByName("CurrentNo"));
-			if ((mdCurrentNoList == null || mdCurrentNoList.isEmpty()) && !writeAllMetadataToAnchor) {	//write CurrentNo only within Series or Periodical, MultiVolumeNo is written to title
-				// No current Number, so we create one
-				try {
-					Metadata md = new Metadata(prefs.getMetadataTypeByName("CurrentNo"));
-					md.setValue(suffix);
-					dsLogical.addMetadata(md);
-				} catch (MetadataTypeNotAllowedException e) {
-					logger.warn(e.toString());
+			if (!writeAllMetadataToAnchor || plugin.writeCurrentNoToMultiVolume) {
+				if ((mdCurrentNoList == null || mdCurrentNoList.isEmpty())) {
+					// No current Number, so we create one
+					try {
+						Metadata md = new Metadata(prefs.getMetadataTypeByName("CurrentNo"));
+						md.setValue(suffix);
+						dsLogical.addMetadata(md);
+					} catch (MetadataTypeNotAllowedException e) {
+						logger.warn(e.toString());
+					}
 				}
 			}
 
 			List<? extends Metadata> mdCurrentNoSortList = dsLogical.getAllMetadataByType(prefs.getMetadataTypeByName("CurrentNoSorting"));
-			if (mdCurrentNoSortList == null || mdCurrentNoSortList.isEmpty()) {
-				// No current Number, so we create one
-				try {
-					Metadata md = new Metadata(prefs.getMetadataTypeByName("CurrentNoSorting"));
-					String str = suffix;
-					if (str.contains("_")) {
-						str = suffix.split("_")[0];
+			if (!writeAllMetadataToAnchor || plugin.writeCurrentNoSortingToMultiVolume) {
+				if (mdCurrentNoSortList == null || mdCurrentNoSortList.isEmpty() && !writeAllMetadataToAnchor) {
+					// No current Number, so we create one
+					try {
+						Metadata md = new Metadata(prefs.getMetadataTypeByName("CurrentNoSorting"));
+						String str = suffix;
+						if (str.contains("_")) {
+							str = suffix.split("_")[0];
+						}
+						if (str.startsWith("V")) {
+							str = str.substring(1);
+						}
+						str = correctCurrentNoSorting(str);
+						md.setValue(str);
+						dsLogical.addMetadata(md);
+					} catch (MetadataTypeNotAllowedException e) {
+						logger.warn(e.toString());
 					}
-					if (str.startsWith("V")) {
-						str = str.substring(1);
-					}
-					str = correctCurrentNoSorting(str);
-					md.setValue(str);
-					dsLogical.addMetadata(md);
-				} catch (MetadataTypeNotAllowedException e) {
-					logger.warn(e.toString());
 				}
 			}
 		}

@@ -73,11 +73,11 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 	private static final Logger logger = Logger.getLogger(CSICOAIImport.class);
 
 	private static final String NAME = "CSICOAIImport";
-	private static final String VERSION = "1.0.20121207";
+	private static final String VERSION = "1.0.20121214";
 	private static final String XSLT_PATH = ConfigMain.getParameter("xsltFolder") + "MARC21slim2MODS3.xsl";
 	// private static final String XSLT_PATH = "resources/" + "MARC21slim2MODS3.xsl";
 	// private static final String MODS_MAPPING_FILE = "resources/" + "mods_map.xml";
-	private static final String MODS_MAPPING_FILE = ConfigMain.getParameter("xsltFolder") + "mods_map.xml";
+	public static final String MODS_MAPPING_FILE = ConfigMain.getParameter("xsltFolder") + "mods_map.xml";
 	private static final String TEMP_DIRECTORY = ConfigMain.getParameter("tempfolder");
 	protected static final String METADATA_LOGICAL_PAGE_NUMBER = "logicalPageNumber";
 	protected static final String METADATA_PHYSICAL_PAGE_NUMBER = "physPageNumber";
@@ -88,6 +88,10 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 	public final String outputEncoding = (ConfigPlugins.getPluginConfig(this).getString("outputEncoding", "iso-8859-15"));
 	public final String inputEncoding = (ConfigPlugins.getPluginConfig(this).getString("inputEncoding", "utf-8"));
 	public final String conversionEncoding = (ConfigPlugins.getPluginConfig(this).getString("conversionEncoding", "iso-8859-15"));
+	public final boolean writeCurrentNoToMultiVolume = (ConfigPlugins.getPluginConfig(this).getBoolean("writeCurrentNoToMultiVolume", false));
+	public final boolean writeCurrentNoSortingToMultiVolume = (ConfigPlugins.getPluginConfig(this).getBoolean("writeCurrentNoSortingToMultiVolume", false));
+	public final boolean useSquareBracketsForVolume = (ConfigPlugins.getPluginConfig(this).getBoolean("useSquareBracketsForVolume", false));
+	public final boolean addVolumeNoToTitle = (ConfigPlugins.getPluginConfig(this).getBoolean("addVolumeNoToTitle", false));
 	private final boolean deleteOriginalImages = ConfigPlugins.getPluginConfig(this).getBoolean("deleteOriginalImages", true);
 	private final boolean deleteTempFiles = ConfigPlugins.getPluginConfig(this).getBoolean("deleteTempFiles", false);
 	private final boolean copyImages = ConfigPlugins.getPluginConfig(this).getBoolean("copyImages", true);
@@ -697,11 +701,16 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 					}
 				}
 
-				if (idMap.get(currentIdentifier.replaceAll("\\D", "")) != null && (idMap.get(currentIdentifier.replaceAll("\\D", "")) == true || (identifierSuffix != null && identifierSuffix.startsWith("V")))) {
-					// This volume is part of a Series/Multivolume work
-//					if (!belongsToPeriodical && !belongsToSeries) {
+				if (idMap.get(currentIdentifier.replaceAll("\\D", "")) != null) {
+
+					if (idMap.get(currentIdentifier.replaceAll("\\D", "")) == true) {
 						belongsToMultiVolume = true;
-//					}
+					} else if ((identifierSuffix != null && identifierSuffix.startsWith("V")) && ((!belongsToPeriodical && !belongsToSeries))) {
+						belongsToMultiVolume = true;
+					}
+					// This volume is part of a Series/Multivolume work
+					// if (!belongsToPeriodical && !belongsToSeries) {
+					// }
 				}
 
 				if (belongsToPeriodical) {
@@ -717,15 +726,24 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 				} else if (isManuscript) {
 					dsType = "SingleManuscript";
 				}
-				//Multivolume may be part of a Series or Periodical. In that case, attach teh volumes to the Series/Periodical
+				// Multivolume may be part of a Series or Periodical. In that case, attach teh volumes to the Series/Periodical
 				if (belongsToMultiVolume) {
-					if(!belongsToPeriodical && !belongsToSeries) {						
+					if (!belongsToPeriodical && !belongsToSeries) {
 						dsAnchorType = "MultiVolumeWork";
 					}
 					if (isManuscript) {
 						dsType = "Manuscript";
 					} else {
 						dsType = "Volume";
+					}
+				}
+
+				// remove unnecessary suffixes for everything but multivolumes
+				if (!belongsToMultiVolume) {
+					if (idMap.get(currentIdentifier.replaceAll("\\D", "")) != null && idMap.get(currentIdentifier.replaceAll("\\D", "")) == true) {
+						// need suffix
+					} else {
+						identifierSuffix = null;
 					}
 				}
 
@@ -754,8 +772,7 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 				DocStruct dsBoundBook = dd.createDocStruct(prefs.getDocStrctTypeByName("BoundBook"));
 				dd.setPhysicalDocStruct(dsBoundBook);
 				// Collect MODS metadata
-				ModsUtils.parseModsSection(MODS_MAPPING_FILE, prefs, dsVolume, dsAnchor, dsBoundBook, eleMods, volumeNo, volumeInfos[1],
-						identifierSuffix);
+				ModsUtils.parseModsSection(this, dsVolume, dsAnchor, dsBoundBook, eleMods, volumeNo, volumeInfos[1]);
 				// currentIdentifier = ModsUtils.getIdentifier(prefs, dsVolume);
 				currentTitle = ModsUtils.getTitle(prefs, dsVolume);
 				currentAuthor = ModsUtils.getAuthor(prefs, dsVolume);
@@ -803,8 +820,7 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 				} catch (TypeNotAllowedAsChildException e) {
 					logger.error("Child Type not allowed", e);
 				}
-				
-				
+
 				// log conversion-errors from marc to mods
 				if (logConversionLoss) {
 					File tempMods = new File("/opt/digiverso/logs/CSIC", "tempMods.xml");
@@ -1163,7 +1179,7 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 			int lastWOVolumeNo = last;
 			if (parts[last].startsWith("V")) {
 				lastWOVolumeNo = last - 1;
-				values[2] = parts[last].replace("V", "");
+				values[2] = parts[last];
 			}
 			values[1] = "";
 			for (int i = 1; i <= lastWOVolumeNo; i++) {
@@ -1173,19 +1189,15 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 			// values[1] = parts[last].replace("V", "");
 			// return parts[last-1];
 		} else if (parts[last].startsWith("V")) {
-			values[2] = parts[last].replace("V", "");
+			values[2] = parts[last];
 		} else {
 			values[1] = parts[last];
 		}
 
-		if (idMap.get(currentIdentifier.replaceAll("\\D", "")) != null) {
-			if (values[2] != null && !values[2].isEmpty() && !values[2].contentEquals("00")) {
-				identifierSuffix = "V" + values[2];
-			} else if(idMap.get(currentIdentifier.replaceAll("\\D", "")) == true) {
-				identifierSuffix = values[1];
-			}
+		if (values[2] != null && !values[2].isEmpty() && !values[2].contentEquals("V00")) {
+			identifierSuffix = values[2];
 		} else {
-			identifierSuffix = null;
+			identifierSuffix = values[1];
 		}
 
 		return values;
@@ -1281,17 +1293,26 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 	public String getId() {
 		return getDescription();
 	}
+	
+	public Prefs getPrefs() {
+		return prefs;
+	}
+	
+	public String getCurrentSuffix() {
+		return identifierSuffix;
+	}
 
-	private Document getMarcModsLoss(Document marcDoc, String  modsString) {
+	private Document getMarcModsLoss(Document marcDoc, String modsString) {
 		modsString = modsString.replaceAll("\"", "");
-		ArrayList<String> trimStrings = new ArrayList<String>(Arrays.asList(new String[] { ".", ",", ":", ";", "(", ")", "[", "]", "{", "}" , "\\", "/", "\t", "\n"}));
+		ArrayList<String> trimStrings = new ArrayList<String>(Arrays.asList(new String[] { ".", ",", ":", ";", "(", ")", "[", "]", "{", "}", "\\",
+				"/", "\t", "\n" }));
 		Element record = marcDoc.getRootElement();
 		if (record == null) {
 			return null;
 		}
 
 		Document missingElementsDoc = new Document(new Element("Lost-in-MarcMods-Conversion"));
-//		String modsString = CommonUtils.getStringFromDocument(modsDoc, "utf-8");
+		// String modsString = CommonUtils.getStringFromDocument(modsDoc, "utf-8");
 		// modsString = modsString.replaceAll("\"", "");
 
 		Iterator<Content> descendant = record.getDescendants();
@@ -1308,7 +1329,8 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 							marcContent = marcContent.substring(1);
 							marcContent = marcContent.trim();
 						}
-						while (trimStrings.contains(marcContent.substring(marcContent.length() - 1, marcContent.length())) && marcContent.length() > 1) {
+						while (trimStrings.contains(marcContent.substring(marcContent.length() - 1, marcContent.length()))
+								&& marcContent.length() > 1) {
 							marcContent = marcContent.substring(0, marcContent.length() - 1);
 							marcContent = marcContent.trim();
 						}
