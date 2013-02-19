@@ -573,6 +573,15 @@ public class CommonUtils {
 //		return dateFormat.format(date);
 	}
 	
+	public static String getDateAsVersionNumber() {
+		Calendar cal = GregorianCalendar.getInstance();
+		Date date = cal.getTime();
+		
+	    SimpleDateFormat simpDate;
+	    simpDate = new SimpleDateFormat("yyyymmdd");
+	    return simpDate.format(date);
+	}
+	
 	/**
 	 * Returns a String containing a human readable representation of the current time, including milliseconds if that parameter is true
 	 * 

@@ -36,8 +36,6 @@ import java.util.regex.Pattern;
 
 import org.apache.commons.lang.StringUtils;
 import org.apache.log4j.Logger;
-import org.apache.poi.hdf.model.hdftypes.FileInformationBlock;
-import org.apache.poi.hssf.record.chart.SeriesIndexRecord;
 import org.jdom.Attribute;
 import org.jdom.Document;
 import org.jdom.Element;
@@ -47,11 +45,6 @@ import org.jdom.input.SAXBuilder;
 import org.jdom.output.XMLOutputter;
 import org.jdom.xpath.XPath;
 
-import de.intranda.goobi.plugins.CSICOAIImport;
-import de.schlichtherle.io.FileInputStream;
-import de.sub.goobi.Import.ImportOpac;
-import de.sub.goobi.config.ConfigMain;
-
 import ugh.dl.DocStruct;
 import ugh.dl.Metadata;
 import ugh.dl.MetadataType;
@@ -59,8 +52,10 @@ import ugh.dl.Person;
 import ugh.dl.Prefs;
 import ugh.dl.RomanNumeral;
 import ugh.exceptions.DocStructHasNoTypeException;
-import ugh.exceptions.IncompletePersonObjectException;
 import ugh.exceptions.MetadataTypeNotAllowedException;
+import de.intranda.goobi.plugins.CSICOAIImport;
+import de.schlichtherle.io.FileInputStream;
+import de.sub.goobi.config.ConfigMain;
 
 public class ModsUtils {
 
@@ -69,12 +64,13 @@ public class ModsUtils {
 
 	private static final Namespace NS_MODS = Namespace.getNamespace("mods", "http://www.loc.gov/mods/v3");
 	private static final String TEMP_DIRECTORY = ConfigMain.getParameter("tempfolder");
+	private static final String PREFIX_SERIES = "Núm. Serie, ";
+    private static final String PREFIX_VOLUME = "Vol. ";
 
 	private static HashMap<String, String> seriesInfo = new HashMap<String, String>(); // Name and identifier of related Item "series"
 	private static String seriesInfoFilename = "seriesInfo.ser";
-	private static ArrayList<String> anchorMetadataList = new ArrayList<String>(Arrays.asList("singleDigCollection", "PublisherName",
-			"PublicationStart", "PublicationEnd", "PublicationRun"));
-	private static ArrayList<String> taxonomyFieldsList = new ArrayList<String>(Arrays.asList("topic", "genre", "geographic", "temporal"));
+	private static ArrayList<String> anchorMetadataList = new ArrayList<String>(Arrays.asList("singleDigCollection"));
+	private static ArrayList<String> taxonomyFieldsList = new ArrayList<String>(Arrays.asList( "titleinfo", "topic", "genre", "geographic", "cartographics", "temporal", "name", "occupation"));
 	private static DecimalFormat volumeNumberFormat = new DecimalFormat("00");
 	private static HashMap<String, String> personRoleMap = new HashMap<String, String>();
 
@@ -179,6 +175,7 @@ public class ModsUtils {
 		personRoleMap.put("arr", null);
 		personRoleMap.put("autor", "Author");
 		personRoleMap.put("aut", "Author");
+	    personRoleMap.put("author", "Author");
 		personRoleMap.put("autor literario", "Author");
 		personRoleMap.put("aut lit", "Author");
 		personRoleMap.put("colaborador", "Collaborator");
@@ -193,6 +190,9 @@ public class ModsUtils {
 		personRoleMap.put("coord", null);
 		personRoleMap.put("corrector", null);
 		personRoleMap.put("corr", null);
+		personRoleMap.put("cwt", "Annotator");
+		personRoleMap.put("anot", "Annotator");
+		personRoleMap.put("ann", "Annotator");
 		personRoleMap.put("dibujante", "IllustratorArtist");
 		personRoleMap.put("dib", "IllustratorArtist");
 		personRoleMap.put("director", "Director");
@@ -420,12 +420,16 @@ public class ModsUtils {
 
 								// set metadata type to role
 								if (roleTerm != null && !roleTerm.isEmpty()) {
-									if (roleTerm.endsWith(".")) {
-										roleTerm = roleTerm.substring(0, roleTerm.length() - 1);
-									}
+									roleTerm = roleTerm.replaceAll("\\.", "");
 									typeName = personRoleMap.get(roleTerm.toLowerCase());
 									if (typeName == null) {
-										typeName = mdName;
+										String[] parts = roleTerm.split(" ");
+										if(parts != null && parts.length > 0) {
+											typeName = personRoleMap.get(parts[0].toLowerCase());
+										}
+										if(typeName == null) {											
+											typeName = mdName;
+										}
 									}
 								} else {
 									// with no role specified, assume it is an author
@@ -439,7 +443,10 @@ public class ModsUtils {
 										lastName = nameSplit[0].trim();
 									}
 									if (nameSplit.length > 1 && StringUtils.isEmpty(firstName)) {
-										firstName = nameSplit[1].trim();
+										for (int i = 1; i < nameSplit.length; i++) {											
+											firstName += nameSplit[i].trim() + ", ";
+										}
+										firstName = firstName.substring(0, firstName.length()-2);
 									}
 								} else {
 									lastName = name;
@@ -488,11 +495,22 @@ public class ModsUtils {
 										Element eleValue = (Element) objValue;
 										List<Element> subjectChildren = eleValue.getChildren();
 										String value = "";
-										for (Element element : subjectChildren) {
-											if (taxonomyFieldsList.contains(element.getName().toLowerCase())) {
-												value = value + separator + element.getValue();
-											}
-										}
+                                        for (Element element : subjectChildren) {
+                                            if (taxonomyFieldsList.contains(element.getName().toLowerCase())) {
+                                                List<Element> subElements = element.getChildren();
+                                                if(subElements != null && !subElements.isEmpty()) {
+                                                    String subValue = "";
+                                                    for (Element subElement : subElements) {
+                                                        if(subElement.getValue() != null && !subElement.getValue().trim().isEmpty()) {                                                          
+                                                            subValue = subValue + " " + subElement.getValue();
+                                                        }
+                                                    }
+                                                    value = value + separator + subValue.trim();
+                                                } else if(element.getValue() != null && !element.getValue().trim().isEmpty()) {                                                        
+                                                    value = value + separator + element.getValue();
+                                                }
+                                            }
+                                        }
 										if (value.length() > separator.length()) {
 											value = value.substring(separator.length()).trim();
 											values.add(value);
@@ -506,7 +524,8 @@ public class ModsUtils {
 									if (objValue instanceof Element) {
 										Element eleValue = (Element) objValue;
 										logger.debug("mdType: " + mdType.getName() + "; Value: " + eleValue.getTextTrim());
-										value = eleValue.getTextTrim();
+										value = getElementValue(eleValue, ", ");
+//										value = eleValue.getTextTrim();
 									} else if (objValue instanceof Attribute) {
 										Attribute atrValue = (Attribute) objValue;
 										logger.debug("mdType: " + mdType.getName() + "; Value: " + atrValue.getValue());
@@ -526,11 +545,13 @@ public class ModsUtils {
 
 					for (String value : values) {
 
-						if (mdType.getName().contentEquals("CurrentNoSorting")) {
-							value = correctCurrentNoSorting(value);
-						} else if (!writeAllMetadataToAnchor && mdType.getName().contentEquals("TitleDocParallel")) {
-							seriesTitle = value;
-						}
+                        if (mdType.getName().contentEquals("CurrentNoSorting")) {
+                            value = correctCurrentNoSorting(value);
+                        } else if(mdType.getName().contentEquals("CurrentNo")) {
+                            value = formatVolumeString(value, PREFIX_SERIES);
+                        } else if (!writeAllMetadataToAnchor && mdType.getName().contentEquals("TitleDocParallel")) {
+                            seriesTitle = value;
+                        }
 
 						// Add singleDigCollection to series also
 						if (!writeAllMetadataToAnchor && anchorMetadataList.contains(mdType.getName()) && dsAnchor != null) {
@@ -560,11 +581,11 @@ public class ModsUtils {
 
 									if (mdName.contentEquals("TitleDocMain")) {
 										if (suffix != null && !suffix.isEmpty() && (plugin.addVolumeNoToTitle || !writeAllMetadataToAnchor)) {
-											if(plugin.useSquareBracketsForVolume) {												
-												metadata.setValue(value + " [" + suffix + "]");
-											} else {
-												metadata.setValue(value + " (" + suffix + ")");
-											}
+                                            if(plugin.useSquareBracketsForVolume) {                                             
+                                                metadata.setValue(value + " [" + suffix + "]");
+                                            } else {
+                                                metadata.setValue(value + " (" + formatVolumeString(suffix, PREFIX_VOLUME) + ")");
+                                            }
 										}
 										try {
 											dsLogical.addMetadata(metadata);
@@ -706,13 +727,19 @@ public class ModsUtils {
 			if (!writeAllMetadataToAnchor || plugin.writeCurrentNoToMultiVolume) {
 				if ((mdCurrentNoList == null || mdCurrentNoList.isEmpty())) {
 					// No current Number, so we create one
-					try {
-						Metadata md = new Metadata(prefs.getMetadataTypeByName("CurrentNo"));
-						md.setValue(suffix);
-						dsLogical.addMetadata(md);
-					} catch (MetadataTypeNotAllowedException e) {
-						logger.warn(e.toString());
-					}
+                    try {
+                        String value = null;
+                        Metadata md = new Metadata(prefs.getMetadataTypeByName("CurrentNo"));
+                        if(writeAllMetadataToAnchor) {
+                            value = formatVolumeString(suffix, PREFIX_VOLUME);
+                        } else {
+                            value = formatVolumeString(suffix, PREFIX_SERIES);
+                        }
+                        md.setValue(value);
+                        dsLogical.addMetadata(md);
+                    } catch (MetadataTypeNotAllowedException e) {
+                        logger.warn(e.toString());
+                    }
 				}
 			}
 
@@ -749,6 +776,39 @@ public class ModsUtils {
 			writeFile(seriesInfoFile, seriesInfo);
 		}
 	}
+	
+	   private static String getElementValue(Element eleValue, String separator) {
+		   if(separator == null) {
+			   separator = " ";
+		   }
+		   String value = eleValue.getTextTrim() == null ? "" : eleValue.getTextTrim();
+		   List<Element> namePartList = eleValue.getChildren("namePart", null);
+		   if(namePartList != null && !namePartList.isEmpty()) {
+			   for (Element element : namePartList) {
+				String namePart = element.getTextTrim();
+				if(namePart != null && !namePart.isEmpty()) {
+					value += separator + namePart;
+				}
+			}
+			   if(value.startsWith(separator)) {
+				   value = value.substring(separator.length());
+			   }
+		   }
+		   return value;
+	}
+
+	private static String formatVolumeString(String value, String prefix) {
+	        int startIndex=0;
+	        if(value.startsWith("V") || value.startsWith("0")) {
+	            startIndex = 1;
+	        } else if(value.startsWith("V0")) {
+	            startIndex = 2;
+	        }
+	        
+	        value = value.substring(startIndex);
+	        
+	        return prefix+value;
+	    }
 
 	/**
 	 * 

@@ -73,12 +73,11 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 	private static final Logger logger = Logger.getLogger(CSICOAIImport.class);
 
 	private static final String NAME = "CSICOAIImport";
-	private static final String VERSION = "1.0.20121214";
+	private static final String VERSION = "1.0.20130218";// + CommonUtils.getDateAsVersionNumber();
 	private static final String XSLT_PATH = ConfigMain.getParameter("xsltFolder") + "MARC21slim2MODS3.xsl";
 	// private static final String XSLT_PATH = "resources/" + "MARC21slim2MODS3.xsl";
 	// private static final String MODS_MAPPING_FILE = "resources/" + "mods_map.xml";
 	public static final String MODS_MAPPING_FILE = ConfigMain.getParameter("xsltFolder") + "mods_map.xml";
-	private static final String TEMP_DIRECTORY = ConfigMain.getParameter("tempfolder");
 	protected static final String METADATA_LOGICAL_PAGE_NUMBER = "logicalPageNumber";
 	protected static final String METADATA_PHYSICAL_PAGE_NUMBER = "physPageNumber";
 
@@ -149,7 +148,7 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 		// projectsCollectionsMap.put("0008_PCTN", "BIBLIOTECAS#Centro de Ciencias Humanas y Sociales (Biblioteca Tomás Navarro Tomás)");
 		// projectsCollectionsMap.put("0009_VCTN", "BIBLIOTECAS#Centro de Ciencias Humanas y Sociales (Biblioteca Tomás Navarro Tomás)");
 		projectsCollectionsMap.put("0010_CMTN", "BIBLIOTECAS#Centro de Ciencias Humanas y Sociales (Biblioteca Tomás Navarro Tomás)");
-		projectsCollectionsMap.put("0012_CIP", "BIBLIOTECAS#Museo Nacional de Ciencias Naturales (Biblioteca)");
+		projectsCollectionsMap.put("0012_CIPP", "BIBLIOTECAS#Museo Nacional de Ciencias Naturales (Biblioteca)");
 		projectsCollectionsMap.put("0013_JAE", "BIBLIOTECAS#Museo Nacional de Ciencias Naturales (Biblioteca)");
 		projectsCollectionsMap.put("0014_FMTN", "BIBLIOTECAS#Centro de Ciencias Humanas y Sociales (Biblioteca Tomás Navarro Tomás)");
 		// projectsCollectionsMap.put("0015_FAG", "BIBLIOTECAS#Centro de Estudios árabes GR-EEA");
@@ -701,9 +700,9 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 					}
 				}
 
-				if (idMap.get(currentIdentifier.replaceAll("\\D", "")) != null) {
+				if (idMap.get(getStrippedId(currentIdentifier)) != null) {
 
-					if (idMap.get(currentIdentifier.replaceAll("\\D", "")) == true) {
+					if (idMap.get(getStrippedId(currentIdentifier)) == true) {
 						belongsToMultiVolume = true;
 					} else if ((identifierSuffix != null && identifierSuffix.startsWith("V")) && ((!belongsToPeriodical && !belongsToSeries))) {
 						belongsToMultiVolume = true;
@@ -740,7 +739,7 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 
 				// remove unnecessary suffixes for everything but multivolumes
 				if (!belongsToMultiVolume) {
-					if (idMap.get(currentIdentifier.replaceAll("\\D", "")) != null && idMap.get(currentIdentifier.replaceAll("\\D", "")) == true) {
+					if (idMap.get(getStrippedId(currentIdentifier)) != null && idMap.get(getStrippedId(currentIdentifier)) == true) {
 						// need suffix
 					} else {
 						identifierSuffix = null;
@@ -888,6 +887,15 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 
 		return ff;
 	}
+	
+	private String getStrippedId(String id) {
+		String[] parts = id.split("_");
+		if(parts == null || parts.length < 2) {
+			return id.replaceAll("\\D", "");
+		} else {
+			return parts[0].replaceAll("\\D", "");
+		}
+	} 
 
 	@Override
 	public String getImportFolder() {
@@ -1200,6 +1208,9 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 			identifierSuffix = values[1];
 		}
 
+		if(identifierSuffix != null) {
+			currentIdentifier = (currentIdentifier + "_" + identifierSuffix).replaceAll("__", "_");
+		}
 		return values;
 
 	}
@@ -1214,7 +1225,7 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 		String processTitle = r.getId();
 
 		// For imports with wrong processTitle, correct it
-		processTitle = processTitle.replace("000471130", "001100392");
+//		processTitle = processTitle.replace("000471130", "001100392");
 		processTitle = processTitle.replace("001363255", "000884278");
 		processTitle = processTitle.replace("00045898", "000045898");
 		processTitle = processTitle.replace("0000045898", "000045898");
@@ -1289,10 +1300,6 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 		}
 	};
 
-	@Override
-	public String getId() {
-		return getDescription();
-	}
 	
 	public Prefs getPrefs() {
 		return prefs;
@@ -1357,5 +1364,10 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 		}
 		return missingElementsDoc;
 	}
+
+    public String getId() {
+        // TODO Auto-generated method stub
+        return null;
+    }
 
 }
