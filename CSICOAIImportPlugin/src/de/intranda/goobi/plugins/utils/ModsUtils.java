@@ -29,6 +29,7 @@ import java.io.ObjectOutputStream;
 import java.text.DecimalFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
@@ -214,8 +215,8 @@ public class ModsUtils {
 
         personRoleMap.put("copier", "Copier");
         personRoleMap.put("frg", "Copier");
-        personRoleMap.put("copiador", "Copier");
-        personRoleMap.put("cp", "Copier");
+        personRoleMap.put("copista", "Copier");
+        personRoleMap.put("cop", "Copier");
         
         personRoleMap.put("corrector", "Corrector");
         personRoleMap.put("corr", "Corrector");
@@ -337,6 +338,7 @@ public class ModsUtils {
         Document mapDoc = new SAXBuilder().build(mappingFile);
         String seriesTitle = null;
         String seriesID = null;
+        List<String> publicationYears = new ArrayList<String>();
         for (Object obj : mapDoc.getRootElement().getChildren("metadata", null)) {
             Element eleMetadata = (Element) obj;
             String mdName = eleMetadata.getChildTextTrim("name", null);
@@ -657,6 +659,11 @@ public class ModsUtils {
                                 if (eleMetadata.getAttribute("logical") != null && eleMetadata.getAttributeValue("logical").equalsIgnoreCase("true")) {
                                     // logger.debug("Added metadata \"" + metadata.getValue() + "\" to logical structure");
 
+                                    if (mdName.contentEquals("PublicationStart") || mdName.contentEquals("PublicationEnd")) {
+                                        publicationYears.add(value);
+                                        continue;
+                                    }
+                                    
                                     if (mdName.contentEquals("TitleDocMain")) {
                                         if (suffix != null && !suffix.isEmpty() && (plugin.addVolumeNoToTitle || !writeAllMetadataToAnchor)) {
                                             if (plugin.useSquareBracketsForVolume) {
@@ -715,6 +722,45 @@ public class ModsUtils {
                 logger.warn("Metadata '" + mdName + "' is not defined in the ruleset.");
             }
         }
+        
+        //construct PublicationYear from Start and Enddate if necessary
+        List<? extends Metadata> mdPublicationList = dsLogical.getAllMetadataByType(prefs.getMetadataTypeByName("PublicationYear"));
+        if ((mdPublicationList == null || mdPublicationList.isEmpty()) && !publicationYears.isEmpty()) {
+            Collections.sort(publicationYears);
+            String value = publicationYears.get(0);
+            if (publicationYears.size() > 1) {
+                value += ("-" + publicationYears.get(publicationYears.size() - 1));
+            }
+            if (value != null && !value.trim().isEmpty()) {
+                try {
+                    Metadata mdPublicationYear = new Metadata(prefs.getMetadataTypeByName("PublicationYear"));
+                    mdPublicationYear.setValue(value);
+
+                    try {
+                        dsLogical.addMetadata(mdPublicationYear);
+                    } catch (MetadataTypeNotAllowedException e) {
+                        logger.error(e.getMessage());
+                    } catch (DocStructHasNoTypeException e) {
+                        logger.error(e.getMessage());
+                    }
+
+                    if (writeAllMetadataToAnchor) {
+                        try {
+                            dsAnchor.addMetadata(mdPublicationYear);
+                        } catch (MetadataTypeNotAllowedException e) {
+                            logger.warn(e.getMessage());
+                        } catch (DocStructHasNoTypeException e) {
+                            logger.warn(e.getMessage());
+                        }
+                    }
+
+                } catch (MetadataTypeNotAllowedException e) {
+                    logger.error(e.getMessage());
+                }
+
+            }
+        }
+
 
         // Code to handle related works, e.g. series, but only if we are not working within a MultiVolume
         if (!writeAllMetadataToAnchor) {
