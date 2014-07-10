@@ -19,10 +19,10 @@ import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.StringTokenizer;
 
 import net.xeoh.plugins.base.annotations.PluginImplementation;
 
-import org.ajax4jsf.org.w3c.tidy.ParserImpl.ParseInline;
 import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang.StringUtils;
 import org.apache.log4j.Logger;
@@ -60,7 +60,6 @@ import de.intranda.goobi.plugins.utils.ModsUtils;
 import de.intranda.utils.CommonUtils;
 import de.sub.goobi.Beans.Prozess;
 import de.sub.goobi.Beans.Prozesseigenschaft;
-import de.sub.goobi.Import.ImportOpac;
 import de.sub.goobi.Persistence.ProzessDAO;
 import de.sub.goobi.config.ConfigMain;
 import de.sub.goobi.config.ConfigPlugins;
@@ -74,7 +73,7 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
     private static final Logger logger = Logger.getLogger(CSICOAIImport.class);
 
     private static final String NAME = "CSICOAIImport";
-    private static final String VERSION = "1.0.20130508";// + CommonUtils.getDateAsVersionNumber();
+    private static final String VERSION = "1.0.20140710";// + CommonUtils.getDateAsVersionNumber();
     private static final String XSLT_PATH = ConfigMain.getParameter("xsltFolder") + "MARC21slim2MODS3.xsl";
     // private static final String XSLT_PATH = "resources/" + "MARC21slim2MODS3.xsl";
     // private static final String MODS_MAPPING_FILE = "resources/" + "mods_map.xml";
@@ -141,24 +140,33 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
         marcStructTypeMap.put("?three dimensional object", null);
         marcStructTypeMap.put("?software, multimedia", null);
         marcStructTypeMap.put("?mixed material", null);
+        
+        List<String> projectList = ConfigPlugins.getPluginConfig(this).getList("project[@name]");
+        List<String> collectionList = ConfigPlugins.getPluginConfig(this).getList("project[@collection]");
+        
+        for (int i = 0; i < projectList.size(); i++) {
+            String projectName = projectList.get(i);
+            String collectionName = collectionList.get(i);
+            projectsCollectionsMap.put(projectName, collectionName);
+        }
 
-        projectsCollectionsMap.put("0001_POQ", "BIBLIOTECAS#Museo Nacional de Ciencias Naturales (Biblioteca)");
-        projectsCollectionsMap.put("0004_PBM", "BIBLIOTECAS#Instituto de Ciencias Matemáticas (Biblioteca Jorqe Juan)");
-        projectsCollectionsMap.put("0005_BETN", "BIBLIOTECAS#Centro de Ciencias Humanas y Sociales (Biblioteca Tomás Navarro Tomás)");
-        // projectsCollectionsMap.put("0006_PMSC_M_CCHS", "BIBLIOTECAS#Centro de Ciencias Humanas y Sociales (Biblioteca Tomás Navarro Tomás)");
-        // projectsCollectionsMap.put("0006_PMSC_G_EEA", "BIBLIOTECAS#Centro de Estudios árabes GR-EEA");
-        projectsCollectionsMap.put("0007_PCTN", "BIBLIOTECAS#Centro de Ciencias Humanas y Sociales (Biblioteca Tomás Navarro Tomás)");
-        // projectsCollectionsMap.put("0008_PCTN", "BIBLIOTECAS#Centro de Ciencias Humanas y Sociales (Biblioteca Tomás Navarro Tomás)");
-        // projectsCollectionsMap.put("0009_VCTN", "BIBLIOTECAS#Centro de Ciencias Humanas y Sociales (Biblioteca Tomás Navarro Tomás)");
-        projectsCollectionsMap.put("0010_CMTN", "BIBLIOTECAS#Centro de Ciencias Humanas y Sociales (Biblioteca Tomás Navarro Tomás)");
-        projectsCollectionsMap.put("0012_CIPP", "BIBLIOTECAS#Museo Nacional de Ciencias Naturales (Biblioteca)");
-        projectsCollectionsMap.put("0013_JAE", "BIBLIOTECAS#Museo Nacional de Ciencias Naturales (Biblioteca)");
-        projectsCollectionsMap.put("0014_FMTN", "BIBLIOTECAS#Centro de Ciencias Humanas y Sociales (Biblioteca Tomás Navarro Tomás)");
-        // projectsCollectionsMap.put("0015_FAG", "BIBLIOTECAS#Centro de Estudios árabes GR-EEA");
-        // projectsCollectionsMap.put("0016_FAAD", "BIBLIOTECAS#Estación Experimental Aula Dei (Biblioteca) ");
-        // projectsCollectionsMap.put("0017_FACN", "BIBLIOTECAS#Museo Nacional de Ciencias Naturales (Biblioteca)");
-        // projectsCollectionsMap.put("0018_ACN_PC","ARCHIVOS#Museo Nacional de Ciencias Naturales (Archivo)#Fondo Personal Científico#Ignacio Bolivar y Urrutia");
-        projectsCollectionsMap.put("0030_CETN", "BIBLIOTECAS#Centro de Ciencias Humanas y Sociales (Biblioteca Tomás Navarro Tomás)");
+//        projectsCollectionsMap.put("0001_POQ", "BIBLIOTECAS#Museo Nacional de Ciencias Naturales (Biblioteca)");
+//        projectsCollectionsMap.put("0004_PBM", "BIBLIOTECAS#Instituto de Ciencias Matemáticas (Biblioteca Jorqe Juan)");
+//        projectsCollectionsMap.put("0005_BETN", "BIBLIOTECAS#Centro de Ciencias Humanas y Sociales (Biblioteca Tomás Navarro Tomás)");
+//        // projectsCollectionsMap.put("0006_PMSC_M_CCHS", "BIBLIOTECAS#Centro de Ciencias Humanas y Sociales (Biblioteca Tomás Navarro Tomás)");
+//        // projectsCollectionsMap.put("0006_PMSC_G_EEA", "BIBLIOTECAS#Centro de Estudios árabes GR-EEA");
+//        projectsCollectionsMap.put("0007_PCTN", "BIBLIOTECAS#Centro de Ciencias Humanas y Sociales (Biblioteca Tomás Navarro Tomás)");
+//        // projectsCollectionsMap.put("0008_PCTN", "BIBLIOTECAS#Centro de Ciencias Humanas y Sociales (Biblioteca Tomás Navarro Tomás)");
+//        // projectsCollectionsMap.put("0009_VCTN", "BIBLIOTECAS#Centro de Ciencias Humanas y Sociales (Biblioteca Tomás Navarro Tomás)");
+//        projectsCollectionsMap.put("0010_CMTN", "BIBLIOTECAS#Centro de Ciencias Humanas y Sociales (Biblioteca Tomás Navarro Tomás)");
+//        projectsCollectionsMap.put("0012_CIPP", "BIBLIOTECAS#Museo Nacional de Ciencias Naturales (Biblioteca)");
+//        projectsCollectionsMap.put("0013_JAE", "BIBLIOTECAS#Museo Nacional de Ciencias Naturales (Biblioteca)");
+//        projectsCollectionsMap.put("0014_FMTN", "BIBLIOTECAS#Centro de Ciencias Humanas y Sociales (Biblioteca Tomás Navarro Tomás)");
+//        // projectsCollectionsMap.put("0015_FAG", "BIBLIOTECAS#Centro de Estudios árabes GR-EEA");
+//        // projectsCollectionsMap.put("0016_FAAD", "BIBLIOTECAS#Estación Experimental Aula Dei (Biblioteca) ");
+//        // projectsCollectionsMap.put("0017_FACN", "BIBLIOTECAS#Museo Nacional de Ciencias Naturales (Biblioteca)");
+//        // projectsCollectionsMap.put("0018_ACN_PC","ARCHIVOS#Museo Nacional de Ciencias Naturales (Archivo)#Fondo Personal Científico#Ignacio Bolivar y Urrutia");
+//        projectsCollectionsMap.put("0030_CETN", "BIBLIOTECAS#Centro de Ciencias Humanas y Sociales (Biblioteca Tomás Navarro Tomás)");
 
     }
 
@@ -491,7 +499,7 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 
     private String getMarcRecordFromOAI(String id) {
 
-        String urlPrefix = "http://aleph.csic.es/OAI?verb=GetRecord&metadataPrefix=marc21&identifier=oai:csic.aleph:MAD01-";
+        String urlPrefix = ConfigPlugins.getPluginConfig(this).getString("url_aleph","http://aleph.csic.es/OAI?verb=GetRecord&metadataPrefix=marc21&identifier=oai:csic.aleph:MAD01-");
         Document oaiDoc = null;
         try {
             String urlString = urlPrefix + id;
@@ -636,7 +644,7 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
                 if (eleTypeOfResourceList != null) {
                     for (Element eleTypeOfResource : eleTypeOfResourceList) {
                         String resourceLabel = eleTypeOfResource.getAttributeValue("displayLabel");
-                        if (resourceLabel != null && resourceLabel.contentEquals("SE")) {
+                        if (resourceLabel != null && resourceLabel.contains("SE")) {
                             belongsToPeriodical = true;
                         }
                         if ("yes".equals(eleTypeOfResource.getAttributeValue("manuscript"))) {
@@ -691,25 +699,27 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 
                 if (belongsToPeriodical) {
                     dsAnchorType = "Periodical";
-                    dsType = "PeriodicalVolume";
+                    if(dsType == "Monograph" || dsType == null) {                        
+                        dsType = "PeriodicalVolume";
+                    }
                 } else if (belongsToSeries) {
                     dsAnchorType = "Series";
                     if (isManuscript) {
                         dsType = "Manuscript";
-                    } else {
+                    } else if(dsType == "Monograph" || dsType == null){
                         dsType = "SerialVolume";
                     }
                 } else if (isManuscript) {
                     dsType = "SingleManuscript";
                 }
-                // Multivolume may be part of a Series or Periodical. In that case, attach teh volumes to the Series/Periodical
+                // Multivolume may be part of a Series or Periodical. In that case, attach the volumes to the Series/Periodical
                 if (belongsToMultiVolume) {
                     if (!belongsToPeriodical && !belongsToSeries) {
                         dsAnchorType = "MultiVolumeWork";
                     }
-                    if (isManuscript) {
+                    if ( isManuscript) {
                         dsType = "Manuscript";
-                    } else {
+                    } else if(!belongsToPeriodical && (dsType == "Monograph" || dsType == null)){
                         dsType = "Volume";
                     }
                 }
@@ -884,14 +894,14 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
     public String getImportFolder() {
         return importFolder.getAbsolutePath() + File.separator;
     }
-
+    
     @Override
     public String getProcessTitle() {
         String title = "";
         if (StringUtils.isNotBlank(currentTitle)) {
-            String atstsl = new ImportOpac().createAtstsl(currentTitle, currentAuthor);
+            String atstsl = createAtstsl(currentTitle, currentAuthor);
             if (atstsl != null) {
-                title = new ImportOpac().createAtstsl(currentTitle, currentAuthor).toLowerCase() + "_" + currentIdentifier + ".xml";
+                title = createAtstsl(currentTitle, currentAuthor).toLowerCase() + "_" + currentIdentifier + ".xml";
             } else {
                 title = currentIdentifier + ".xml";
             }
@@ -1360,6 +1370,64 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
     public String getId() {
         // TODO Auto-generated method stub
         return null;
+    }
+    
+    public String createAtstsl(String myTitle, String autor) {
+        String myAtsTsl = "";
+        if (autor != null && !autor.equals("")) {
+            /* autor */
+            if (autor.length() > 4) {
+                myAtsTsl = autor.substring(0, 4);
+            } else {
+                myAtsTsl = autor;
+                /* titel */
+            }
+
+            if (myTitle.length() > 4) {
+                myAtsTsl += myTitle.substring(0, 4);
+            } else {
+                myAtsTsl += myTitle;
+            }
+        }
+
+        /*
+         * -------------------------------- bei Zeitschriften Tsl berechnen --------------------------------
+         */
+        // if (gattung.startsWith("ab") || gattung.startsWith("ob")) {
+        if (autor == null || autor.equals("")) {
+            myAtsTsl = "";
+            StringTokenizer tokenizer = new StringTokenizer(myTitle);
+            int counter = 1;
+            while (tokenizer.hasMoreTokens()) {
+                String tok = tokenizer.nextToken();
+                if (counter == 1) {
+                    if (tok.length() > 4) {
+                        myAtsTsl += tok.substring(0, 4);
+                    } else {
+                        myAtsTsl += tok;
+                    }
+                }
+                if (counter == 2 || counter == 3) {
+                    if (tok.length() > 2) {
+                        myAtsTsl += tok.substring(0, 2);
+                    } else {
+                        myAtsTsl += tok;
+                    }
+                }
+                if (counter == 4) {
+                    if (tok.length() > 1) {
+                        myAtsTsl += tok.substring(0, 1);
+                    } else {
+                        myAtsTsl += tok;
+                    }
+                }
+                counter++;
+            }
+        }
+        /* im ATS-TSL die Umlaute ersetzen */
+    
+        myAtsTsl = myAtsTsl.replaceAll("[\\W]", "");
+        return myAtsTsl;
     }
 
 }

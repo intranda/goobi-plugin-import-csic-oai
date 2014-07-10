@@ -343,7 +343,7 @@ public class ModsUtils {
             Element eleMetadata = (Element) obj;
             String mdName = eleMetadata.getChildTextTrim("name", null);
 
-            if (mdName.contentEquals("location")) {
+            if ("location".equals(mdName)) {
                 // write location info
                 int counter = 0;
                 List<Element> eleXpathList = eleMetadata.getChildren("xpath", null);
@@ -611,7 +611,8 @@ public class ModsUtils {
                                         logger.debug("mdType: " + mdType.getName() + "; Value: " + atrValue.getValue());
                                         value = atrValue.getValue();
                                     }
-                                    if (value != null && values.size() <= count) {
+                                    boolean mergeXPaths = mergeXPaths(eleMetadata);
+                                    if (value != null && (values.size() <= count || !mergeXPaths)) {
                                         values.add(value);
                                     } else if (value != null) {
                                         value = values.get(count) + separator + value;
@@ -722,7 +723,7 @@ public class ModsUtils {
                 logger.warn("Metadata '" + mdName + "' is not defined in the ruleset.");
             }
         }
-        
+          
         //construct PublicationYear from Start and Enddate if necessary
         List<? extends Metadata> mdPublicationList = dsLogical.getAllMetadataByType(prefs.getMetadataTypeByName("PublicationYear"));
         if ((mdPublicationList == null || mdPublicationList.isEmpty()) && !publicationYears.isEmpty()) {
@@ -898,6 +899,15 @@ public class ModsUtils {
                 seriesInfoFile.delete();
             }
             writeFile(seriesInfoFile, seriesInfo);
+        }
+    }
+    
+    private static boolean mergeXPaths(Element eleMetadata) {
+        String value = eleMetadata.getAttributeValue("mergeXPaths");
+        if("false".equals(value)) {
+            return false;
+        } else {
+            return true;
         }
     }
 
