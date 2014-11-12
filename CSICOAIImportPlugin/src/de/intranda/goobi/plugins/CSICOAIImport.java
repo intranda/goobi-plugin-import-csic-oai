@@ -23,6 +23,9 @@ import java.util.StringTokenizer;
 
 import net.xeoh.plugins.base.annotations.PluginImplementation;
 
+import org.apache.commons.configuration.SubnodeConfiguration;
+import org.apache.commons.configuration.XMLConfiguration;
+import org.apache.commons.configuration.tree.xpath.XPathExpressionEngine;
 import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang.StringUtils;
 import org.apache.log4j.Logger;
@@ -73,13 +76,14 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
     private static final Logger logger = Logger.getLogger(CSICOAIImport.class);
 
     private static final String NAME = "CSICOAIImport";
-    private static final String VERSION = "1.0.20140710";// + CommonUtils.getDateAsVersionNumber();
+    private static final String VERSION = "1.0.20140908";// + CommonUtils.getDateAsVersionNumber();
     private static final String XSLT_PATH = ConfigMain.getParameter("xsltFolder") + "MARC21slim2MODS3.xsl";
     // private static final String XSLT_PATH = "resources/" + "MARC21slim2MODS3.xsl";
     // private static final String MODS_MAPPING_FILE = "resources/" + "mods_map.xml";
     public static final String MODS_MAPPING_FILE = ConfigMain.getParameter("xsltFolder") + "mods_map.xml";
     protected static final String METADATA_LOGICAL_PAGE_NUMBER = "logicalPageNumber";
     protected static final String METADATA_PHYSICAL_PAGE_NUMBER = "physPageNumber";
+    private static final Namespace marc_namespace = Namespace.getNamespace("marc", "http://www.loc.gov/MARC21/slim http://www.loc.gov/standards/marcxml/schema/MARC21slim.xsd"); 
 
     private static final String idPrefix = "";
     public final File exportFolder = new File(ConfigPlugins.getPluginConfig(this).getString("importFolder", "/opt/digiverso/ftp-import/"));
@@ -98,6 +102,8 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
     private final boolean updateExistingRecords = ConfigPlugins.getPluginConfig(this).getBoolean("updateExistingRecords", true);
     private final boolean logConversionLoss = ConfigPlugins.getPluginConfig(this).getBoolean("logConversionLoss", false);
     private final boolean relatedSeriesIsAnchor = ConfigPlugins.getPluginConfig(this).getBoolean("relatedSeriesIsAnchor", false);
+    private final String urlPrefix = ConfigPlugins.getPluginConfig(this).getString("url_aleph",
+            "http://aleph.csic.es/OAI?verb=GetRecord&metadataPrefix=marc21&identifier=oai:csic.aleph:MAD01-");
     
     private String data;
 
@@ -121,52 +127,43 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
     // private boolean deleteOriginalImages = true;
     // private boolean updateExistingRecords = true;
 
+    @SuppressWarnings("unchecked")
     public CSICOAIImport() {
-        marcStructTypeMap.put("?monographic", "Monograph");
-        // map.put("?continuing", "Periodical");
-        marcStructTypeMap.put("?continuing", "PeriodicalVolume");
-        // map.put("?multipart monograph", "MultiVolumeWork");
-        marcStructTypeMap.put("?multipart monograph", "Volume");
-        marcStructTypeMap.put("?single unit", "Monograph");
-        // map.put("?integrating resource", "MultiVolumeWork");
-        marcStructTypeMap.put("?integrating resource", "Volume");
-        // map.put("?serial", "Periodical");
-        marcStructTypeMap.put("?serial", "SerialVolume");
-        marcStructTypeMap.put("?cartographic", "Map");
-        marcStructTypeMap.put("?notated music", null);
-        marcStructTypeMap.put("?sound recording-nonmusical", null);
-        marcStructTypeMap.put("?sound recording-musical", null);
-        marcStructTypeMap.put("?moving image", null);
-        marcStructTypeMap.put("?three dimensional object", null);
-        marcStructTypeMap.put("?software, multimedia", null);
-        marcStructTypeMap.put("?mixed material", null);
-        
+
+        String catalogueName = "MAD01";
+        try {
+            catalogueName = urlPrefix.substring(urlPrefix.lastIndexOf(":"));
+            catalogueName = catalogueName.replaceAll("\\W", "");
+        } catch (IndexOutOfBoundsException e) {
+            logger.error(e);
+        }
+        List<String> docTypesMarc = new ArrayList<String>();
+        List<String> docTypesGoobi = new ArrayList<String>();
+        try {
+            XMLConfiguration config = ConfigPlugins.getPluginConfig(this);
+            config.setExpressionEngine(new XPathExpressionEngine());
+            SubnodeConfiguration docTypeConfig = config.configurationAt("DocTypeConfig[@catalogue=\"" + catalogueName + "\"]");
+            docTypesMarc = docTypeConfig.getList("DocType/@typeOfResource");
+            docTypesGoobi = docTypeConfig.getList("DocType/@goobiName");
+        } catch (IllegalArgumentException e) {
+            logger.error(e);
+            docTypesMarc.add("monographic");
+            docTypesGoobi.add("Monograph");
+        }
+        for (int i = 0; i < docTypesMarc.size(); i++) {
+            String marcName = docTypesMarc.get(i);
+            String goobiName = docTypesGoobi.get(i);
+            marcStructTypeMap.put("?" + marcName, goobiName);
+        }
+
         List<String> projectList = ConfigPlugins.getPluginConfig(this).getList("project[@name]");
         List<String> collectionList = ConfigPlugins.getPluginConfig(this).getList("project[@collection]");
-        
+
         for (int i = 0; i < projectList.size(); i++) {
             String projectName = projectList.get(i);
             String collectionName = collectionList.get(i);
             projectsCollectionsMap.put(projectName, collectionName);
         }
-
-//        projectsCollectionsMap.put("0001_POQ", "BIBLIOTECAS#Museo Nacional de Ciencias Naturales (Biblioteca)");
-//        projectsCollectionsMap.put("0004_PBM", "BIBLIOTECAS#Instituto de Ciencias Matemáticas (Biblioteca Jorqe Juan)");
-//        projectsCollectionsMap.put("0005_BETN", "BIBLIOTECAS#Centro de Ciencias Humanas y Sociales (Biblioteca Tomás Navarro Tomás)");
-//        // projectsCollectionsMap.put("0006_PMSC_M_CCHS", "BIBLIOTECAS#Centro de Ciencias Humanas y Sociales (Biblioteca Tomás Navarro Tomás)");
-//        // projectsCollectionsMap.put("0006_PMSC_G_EEA", "BIBLIOTECAS#Centro de Estudios árabes GR-EEA");
-//        projectsCollectionsMap.put("0007_PCTN", "BIBLIOTECAS#Centro de Ciencias Humanas y Sociales (Biblioteca Tomás Navarro Tomás)");
-//        // projectsCollectionsMap.put("0008_PCTN", "BIBLIOTECAS#Centro de Ciencias Humanas y Sociales (Biblioteca Tomás Navarro Tomás)");
-//        // projectsCollectionsMap.put("0009_VCTN", "BIBLIOTECAS#Centro de Ciencias Humanas y Sociales (Biblioteca Tomás Navarro Tomás)");
-//        projectsCollectionsMap.put("0010_CMTN", "BIBLIOTECAS#Centro de Ciencias Humanas y Sociales (Biblioteca Tomás Navarro Tomás)");
-//        projectsCollectionsMap.put("0012_CIPP", "BIBLIOTECAS#Museo Nacional de Ciencias Naturales (Biblioteca)");
-//        projectsCollectionsMap.put("0013_JAE", "BIBLIOTECAS#Museo Nacional de Ciencias Naturales (Biblioteca)");
-//        projectsCollectionsMap.put("0014_FMTN", "BIBLIOTECAS#Centro de Ciencias Humanas y Sociales (Biblioteca Tomás Navarro Tomás)");
-//        // projectsCollectionsMap.put("0015_FAG", "BIBLIOTECAS#Centro de Estudios árabes GR-EEA");
-//        // projectsCollectionsMap.put("0016_FAAD", "BIBLIOTECAS#Estación Experimental Aula Dei (Biblioteca) ");
-//        // projectsCollectionsMap.put("0017_FACN", "BIBLIOTECAS#Museo Nacional de Ciencias Naturales (Biblioteca)");
-//        // projectsCollectionsMap.put("0018_ACN_PC","ARCHIVOS#Museo Nacional de Ciencias Naturales (Archivo)#Fondo Personal Científico#Ignacio Bolivar y Urrutia");
-//        projectsCollectionsMap.put("0030_CETN", "BIBLIOTECAS#Centro de Ciencias Humanas y Sociales (Biblioteca Tomás Navarro Tomás)");
 
     }
 
@@ -211,9 +208,10 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
                     String fileName = getImportFolder() + getProcessTitle();
                     logger.debug("Writing '" + fileName + "'...");
                     mm.write(fileName);
-                    
-                    List<? extends Metadata> mdList = mm.getDigitalDocument().getLogicalDocStruct().getAllMetadataByType(prefs.getMetadataTypeByName("TitleDocMain"));
-                    
+
+                    List<? extends Metadata> mdList =
+                            mm.getDigitalDocument().getLogicalDocStruct().getAllMetadataByType(prefs.getMetadataTypeByName("TitleDocMain"));
+
                     logger.debug("copying image files from " + imageDir.getAbsolutePath() + "...");
                     copyImageFiles(imageDir);
                     io.setProcessTitle(getProcessTitle().replace(".xml", ""));
@@ -366,8 +364,10 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
             if (idMap.get(idNumber) != null && idMap.get(idNumber) == true) {
                 if (idParts[2] != null && !idParts[2].trim().isEmpty() && !idParts[2].trim().replaceAll("_", "").contentEquals("V00")) {
                     record.setId(idParts[0] + "_" + idParts[2]);
-                } else {
+                } else if (idParts[1] != null) {
                     record.setId(idParts[0] + "_" + idParts[1]);
+                } else {
+                    record.setId(idParts[0]);
                 }
             } else {
                 record.setId(idParts[0]);
@@ -499,7 +499,6 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 
     private String getMarcRecordFromOAI(String id) {
 
-        String urlPrefix = ConfigPlugins.getPluginConfig(this).getString("url_aleph","http://aleph.csic.es/OAI?verb=GetRecord&metadataPrefix=marc21&identifier=oai:csic.aleph:MAD01-");
         Document oaiDoc = null;
         try {
             String urlString = urlPrefix + id;
@@ -585,9 +584,9 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
             sr = new StringReader(data);
             ByteArrayInputStream bais = new ByteArrayInputStream(data.getBytes(conversionEncoding));
             doc = new SAXBuilder().build(bais);
-
             // remove namespaces
             Element docRoot = doc.getRootElement();
+            docRoot = getActualRecordElement(docRoot);
             docRoot = setNamespaceRecursive(docRoot, null);
             Element newRecord = new Element("record");
             List<Element> eleList = new ArrayList<Element>();
@@ -611,7 +610,6 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
             if (doc != null && doc.hasRootElement()) {
                 XSLTransformer transformer = new XSLTransformer(XSLT_PATH);
                 Document docMods = transformer.transform(doc);
-
                 // logger.debug(new XMLOutputter().outputString(docMods));
                 ff = new MetsMods(prefs);
                 DigitalDocument dd = new DigitalDocument();
@@ -697,29 +695,32 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
                     // }
                 }
 
+                //manuscript is set in config, so we ignore the setting here
+                isManuscript = false;
+
                 if (belongsToPeriodical) {
                     dsAnchorType = "Periodical";
-                    if(dsType == "Monograph" || dsType == null) {                        
+                    if (dsType == "Monograph" || dsType == null) {
                         dsType = "PeriodicalVolume";
                     }
                 } else if (belongsToSeries) {
                     dsAnchorType = "Series";
                     if (isManuscript) {
                         dsType = "Manuscript";
-                    } else if(dsType == "Monograph" || dsType == null){
-                        dsType = "SerialVolume";
+                    } else if (dsType == "Monograph" || dsType == null) {
+                        dsType = "Monograph";
                     }
                 } else if (isManuscript) {
-                    dsType = "SingleManuscript";
+                    dsType = "Manuscript";
                 }
                 // Multivolume may be part of a Series or Periodical. In that case, attach the volumes to the Series/Periodical
                 if (belongsToMultiVolume) {
                     if (!belongsToPeriodical && !belongsToSeries) {
                         dsAnchorType = "MultiVolumeWork";
                     }
-                    if ( isManuscript) {
+                    if (isManuscript) {
                         dsType = "Manuscript";
-                    } else if(!belongsToPeriodical && (dsType == "Monograph" || dsType == null)){
+                    } else if (!belongsToPeriodical && (dsType == "Monograph" || dsType == null)) {
                         dsType = "Volume";
                     }
                 }
@@ -792,9 +793,6 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
                         dsAnchor.addChild(dsVolume);
                         dd.setLogicalDocStruct(dsAnchor);
                         String volumeName = dsVolume.getType().getName();
-                        if (volumeName.contentEquals("Monograph")) {
-                            dsVolume.setType(prefs.getDocStrctTypeByName("SerialVolume"));
-                        }
                         if (volumeName.contentEquals("SingleManuscript")) {
                             dsVolume.setType(prefs.getDocStrctTypeByName("Manuscript"));
                         }
@@ -804,9 +802,6 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
                         String volumeName = dsVolume.getType().getName();
                         if (volumeName.contentEquals("SerialVolume")) {
                             dsVolume.setType(prefs.getDocStrctTypeByName("Monograph"));
-                        }
-                        if (volumeName.contentEquals("Manuscript")) {
-                            dsVolume.setType(prefs.getDocStrctTypeByName("SingleManuscript"));
                         }
                     }
                 } catch (TypeNotAllowedAsChildException e) {
@@ -850,9 +845,9 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
                         Metadata mdCollection = new Metadata(mdTypeCollection);
                         mdCollection.setValue(collection);
                         dsVolume.addMetadata(mdCollection);
-//                        if (dsAnchor != null) {
-//                            dsAnchor.addMetadata(mdCollection);
-//                        }
+                        //                        if (dsAnchor != null) {
+                        //                            dsAnchor.addMetadata(mdCollection);
+                        //                        }
                     }
                 }
             }
@@ -881,6 +876,21 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
         return ff;
     }
 
+    private Element getActualRecordElement(Element root) {
+        if(root.getName().equals("record") && root.getNamespace().getPrefix().equals("marc")) {
+            return root;
+        } else {
+            Iterator<Content> iterator = root.getDescendants();
+            while(iterator.hasNext()) {
+                Content content = iterator.next();
+                if(content instanceof Element && ((Element) content).getName().equals("record") && ((Element) content).getNamespace().getPrefix().equals("marc")) {
+                    return (Element) content;
+                }
+            }
+        }
+        return root;
+    }
+
     private String getStrippedId(String id) {
         String[] parts = id.split("_");
         if (parts == null || parts.length < 2) {
@@ -894,7 +904,7 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
     public String getImportFolder() {
         return importFolder.getAbsolutePath() + File.separator;
     }
-    
+
     @Override
     public String getProcessTitle() {
         String title = "";
@@ -1197,13 +1207,12 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
             // return parts[last-1];
         } else if (parts[last].startsWith("V")) {
             values[2] = parts[last];
-        } else {
+        } else if (values[1] != null && !values[1].equals(currentIdentifier)) {
             values[1] = parts[last];
         }
-
         if (values[2] != null && !values[2].isEmpty() && !values[2].contentEquals("V00")) {
             identifierSuffix = values[2];
-        } else {
+        } else if (values[1] != null && !values[1].equals(currentIdentifier)) {
             identifierSuffix = values[1];
         }
 
@@ -1211,7 +1220,7 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
             if (identifierSuffix.startsWith("_")) {
                 identifierSuffix = identifierSuffix.substring(1);
             }
-            
+
             currentIdentifier = (currentIdentifier + "_" + identifierSuffix).replaceAll("__", "_");
         }
         return values;
@@ -1371,7 +1380,7 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
         // TODO Auto-generated method stub
         return null;
     }
-    
+
     public String createAtstsl(String myTitle, String autor) {
         String myAtsTsl = "";
         if (autor != null && !autor.equals("")) {
@@ -1425,7 +1434,7 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
             }
         }
         /* im ATS-TSL die Umlaute ersetzen */
-    
+
         myAtsTsl = myAtsTsl.replaceAll("[\\W]", "");
         return myAtsTsl;
     }
