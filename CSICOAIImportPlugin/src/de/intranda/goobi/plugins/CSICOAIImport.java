@@ -59,6 +59,7 @@ import ugh.exceptions.TypeNotAllowedAsChildException;
 import ugh.exceptions.TypeNotAllowedForParentException;
 import ugh.exceptions.WriteException;
 import ugh.fileformats.mets.MetsMods;
+import de.intranda.goobi.plugins.utils.DocTypeConfiguration;
 import de.intranda.goobi.plugins.utils.ModsUtils;
 import de.intranda.utils.CommonUtils;
 import de.sub.goobi.Beans.Prozess;
@@ -76,7 +77,7 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
     private static final Logger logger = Logger.getLogger(CSICOAIImport.class);
 
     private static final String NAME = "CSICOAIImport";
-    private static final String VERSION = "1.0.20141112";// + CommonUtils.getDateAsVersionNumber();
+    private static final String VERSION = "1.2.20141121";// + CommonUtils.getDateAsVersionNumber();
     private static final String XSLT_PATH = ConfigMain.getParameter("xsltFolder") + "MARC21slim2MODS3.xsl";
     // private static final String XSLT_PATH = "resources/" + "MARC21slim2MODS3.xsl";
     // private static final String MODS_MAPPING_FILE = "resources/" + "mods_map.xml";
@@ -110,11 +111,11 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
     private Prefs prefs;
     private File importFolder = null; // goobi temp folder
 
-    private Map<String, String> marcStructTypeMap = new HashMap<String, String>();
     private Map<String, String> projectsCollectionsMap = new HashMap<String, String>();
     private Map<String, File> recordImageMap = new HashMap<String, File>();
     private HashMap<String, Boolean> idMap = new HashMap<String, Boolean>(); // maps to true all records with reoccuring ids (PPNs)
-
+    private DocTypeConfiguration docTypeConfig;
+    
     private String identifierSuffix;
     private String currentIdentifier;
     private String currentTitle;
@@ -129,33 +130,7 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
 
     @SuppressWarnings("unchecked")
     public CSICOAIImport() {
-
-        String catalogueName = "MAD01";
-        try {
-            catalogueName = urlPrefix.substring(urlPrefix.lastIndexOf(":"));
-            catalogueName = catalogueName.replaceAll("\\W", "");
-        } catch (IndexOutOfBoundsException e) {
-            logger.error(e);
-        }
-        List<String> docTypesMarc = new ArrayList<String>();
-        List<String> docTypesGoobi = new ArrayList<String>();
-        try {
-            XMLConfiguration config = ConfigPlugins.getPluginConfig(this);
-            config.setExpressionEngine(new XPathExpressionEngine());
-            SubnodeConfiguration docTypeConfig = config.configurationAt("DocTypeConfig[@catalogue=\"" + catalogueName + "\"]");
-            docTypesMarc = docTypeConfig.getList("DocType/@typeOfResource");
-            docTypesGoobi = docTypeConfig.getList("DocType/@goobiName");
-        } catch (IllegalArgumentException e) {
-            logger.error(e);
-            docTypesMarc.add("monographic");
-            docTypesGoobi.add("Monograph");
-        }
-        for (int i = 0; i < docTypesMarc.size(); i++) {
-            String marcName = docTypesMarc.get(i);
-            String goobiName = docTypesGoobi.get(i);
-            marcStructTypeMap.put("?" + marcName, goobiName);
-        }
-
+        docTypeConfig = new DocTypeConfiguration(ConfigPlugins.getPluginConfig(this), urlPrefix);
         List<String> projectList = ConfigPlugins.getPluginConfig(this).getList("project[@name]");
         List<String> collectionList = ConfigPlugins.getPluginConfig(this).getList("project[@collection]");
 
@@ -632,10 +607,12 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
                 // Determine the root docstruct type
                 String dsType = null;
                 String dsAnchorType = null;
+                String typeOfResource = null;
                 boolean belongsToPeriodical = false;
                 boolean belongsToSeries = false;
-                boolean isManuscript = false;
+                boolean manuscript = false;
                 boolean belongsToMultiVolume = false;
+                boolean archiveMaterial = false;
 
                 // handle TypeOfResource
                 List<Element> eleTypeOfResourceList = eleMods.getChildren("typeOfResource", null);
@@ -646,13 +623,10 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
                             belongsToPeriodical = true;
                         }
                         if ("yes".equals(eleTypeOfResource.getAttributeValue("manuscript"))) {
-                            isManuscript = true;
+                            manuscript = true;
                         }
-                        if (marcStructTypeMap.get("?" + eleTypeOfResource.getTextTrim()) != null) {
-                            dsType = marcStructTypeMap.get("?" + eleTypeOfResource.getTextTrim());
-                        } else {
-                            dsType = "Monograph";
-                        }
+                        typeOfResource = eleTypeOfResource.getTextTrim();
+                        logger.debug("Found type of resource: " + typeOfResource);
                     }
                 }
 
@@ -664,12 +638,29 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
                         if (eleFormList != null) {
                             for (Element eleForm : eleFormList) {
                                 if (eleForm.getAttribute("authority") != null && eleForm.getValue().contentEquals("Manuscrito")) {
-                                    isManuscript = true;
+                                    manuscript = true;
                                 }
                             }
                         }
                     }
                 }
+                
+                // handle archive
+                List<Element> recordInfoList = eleMods.getChildren("recordInfo", null);
+                if (physicalDescriptionList != null) {
+                    for (Element recordInfo : recordInfoList) {
+                        List<Element> eleIdList = recordInfo.getChildren("recordIdentifier", null);
+                        if (eleIdList != null) {
+                            for (Element eleId : eleIdList) {
+                                String id = eleId.getTextTrim();
+                                if(id != null && id.startsWith("CSICAR")) {
+                                    archiveMaterial = true;
+                                }
+                            }
+                        }
+                    }
+                }
+                
 
                 // handle relatedSeries
                 List<Element> eleRelatedSeriesList = eleMods.getChildren("relatedItem", null);
@@ -695,35 +686,14 @@ public class CSICOAIImport implements IImportPlugin, IPlugin {
                     // }
                 }
 
-                //manuscript is set in config, so we ignore the setting here
-                isManuscript = false;
+                
+                boolean multipart = belongsToMultiVolume || belongsToPeriodical || belongsToSeries;
 
-                if (belongsToPeriodical) {
-                    dsAnchorType = "Periodical";
-                    if (dsType == "Monograph" || dsType == null) {
-                        dsType = "PeriodicalVolume";
-                    }
-                } else if (belongsToSeries) {
-                    dsAnchorType = "Series";
-                    if (isManuscript) {
-                        dsType = "Manuscript";
-                    } else if (dsType == "Monograph" || dsType == null) {
-                        dsType = "Monograph";
-                    }
-                } else if (isManuscript) {
-                    dsType = "Manuscript";
-                }
-                // Multivolume may be part of a Series or Periodical. In that case, attach the volumes to the Series/Periodical
-                if (belongsToMultiVolume) {
-                    if (!belongsToPeriodical && !belongsToSeries) {
-                        dsAnchorType = "MultiVolumeWork";
-                    }
-                    if (isManuscript) {
-                        dsType = "Manuscript";
-                    } else if (!belongsToPeriodical && (dsType == "Monograph" || dsType == null)) {
-                        dsType = "Volume";
-                    }
-                }
+                logger.debug("record is " + (multipart ? "part of a multipart work" : "a monographic work"));
+                logger.debug("record is " + (archiveMaterial ? "part of an archive" : "not an archive record"));
+                
+                dsType = docTypeConfig.getDocType(typeOfResource, multipart, archiveMaterial);
+                dsAnchorType = docTypeConfig.getAnchorType(typeOfResource, multipart, archiveMaterial);
 
                 // remove unnecessary suffixes for everything but multivolumes
                 if (!belongsToMultiVolume) {
