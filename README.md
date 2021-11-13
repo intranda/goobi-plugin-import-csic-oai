@@ -3,7 +3,7 @@ Goobi workflow Plugin: goobi-plugin-import-csic-oai
 
 <img src="https://goobi.io/wp-content/uploads/logo_goobi_plugin.png" align="right" style="margin:0 0 20px 20px;" alt="Plugin for Goobi workflow" width="175" height="109">
 
-Goobi import plugin for the Consejo Superior de Investigaciones Científicas
+Import plugin for Goobi workflow which allows the import of proprietary data for the Consejo Superior de Investigaciones Cientificas (CSIC).
 
 This is a plugin for Goobi workflow, the open source workflow tracking software for digitisation projects. More information about Goobi workflow is available under https://goobi.io. If you want to get in touch with the user community simply go to https://community.goobi.io.
 
